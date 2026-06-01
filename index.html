@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Wingo Strategy Dashboard - Color Prediction</title>
+  <meta name="description" content="Real-time Wingo Color Prediction Strategy Dashboard with RGRG/GRGR pattern detection and smart signal system">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎰</text></svg>">
+  <meta name="theme-color" content="#0a0a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="manifest" href="manifest.json">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Fetching live data...</div>
+  </div>
+
+  <!-- Signal Banner -->
+  <div id="signal-banner" class="signal-banner hidden">
+    <div class="signal-content">
+      <span class="signal-icon">🚨</span>
+      <div class="signal-details">
+        <span id="signal-main-text" class="signal-main-text">SIGNAL ACTIVE</span>
+        <span id="signal-sub-text" class="signal-sub-text">Bet GREEN on Parity - Period #97</span>
+      </div>
+      <span class="signal-icon">🚨</span>
+    </div>
+  </div>
+
+  <!-- App Header -->
+  <header class="app-header" id="app-header">
+    <h1>🎰 WINGO STRATEGY</h1>
+    <div class="header-info">
+      <span id="app-status" class="status-badge watching">WATCHING ALL</span>
+      <span id="notification-status" class="status-badge watching" style="cursor: pointer;" onclick="requestNotificationPermission()">🔔 NO ALERTS</span>
+      <span id="last-update" class="update-time">--:--:--</span>
+    </div>
+    <div class="refresh-bar-container">
+      <div id="refresh-bar" class="refresh-bar"></div>
+    </div>
+  </header>
+
+  <!-- Strategy Status Panel -->
+  <section id="strategy-panel" class="strategy-panel">
+    <div class="strategy-info">
+      <div>
+        <span class="label">Mode</span>
+        <span id="mode-text" class="value watching-mode">WATCHING</span>
+      </div>
+      <div>
+        <span class="label">Active Section</span>
+        <span id="active-section-text" class="value">All Sections</span>
+      </div>
+      <div>
+        <span class="label">Next Signal</span>
+        <span id="next-signal-text" class="value">--</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sections Grid -->
+  <main class="sections-grid" id="sections-grid">
+
+    <!-- Parity -->
+    <div class="section-card" data-section="P" id="card-P">
+      <div class="section-header">
+        <span class="section-name">🎯 Parity</span>
+        <span class="section-status status-watching" id="status-P">Watching</span>
+      </div>
+      <div class="period-info">
+        <span id="period-P">Period: --</span>
+        <span id="next-period-P">Next: --</span>
+      </div>
+      <div class="color-trend" id="trend-P">
+        <div class="empty-state"><div class="spinner"></div><br>Loading...</div>
+      </div>
+      <div class="section-info">
+        <div class="pattern-status no-pattern" id="pattern-P">No Pattern</div>
+        <div class="bet-info bet-none" id="bet-P">--</div>
+      </div>
+      <div class="section-stats">
+        <span class="stat win" id="wins-P">W: 0</span>
+        <span class="stat loss" id="losses-P">L: 0</span>
+        <span class="stat streak" id="streak-P">Streak: 0</span>
+      </div>
+      <div class="bet-history" id="history-P"></div>
+    </div>
+
+    <!-- Sapre -->
+    <div class="section-card" data-section="S" id="card-S">
+      <div class="section-header">
+        <span class="section-name">⚡ Sapre</span>
+        <span class="section-status status-watching" id="status-S">Watching</span>
+      </div>
+      <div class="period-info">
+        <span id="period-S">Period: --</span>
+        <span id="next-period-S">Next: --</span>
+      </div>
+      <div class="color-trend" id="trend-S">
+        <div class="empty-state"><div class="spinner"></div><br>Loading...</div>
+      </div>
+      <div class="section-info">
+        <div class="pattern-status no-pattern" id="pattern-S">No Pattern</div>
+        <div class="bet-info bet-none" id="bet-S">--</div>
+      </div>
+      <div class="section-stats">
+        <span class="stat win" id="wins-S">W: 0</span>
+        <span class="stat loss" id="losses-S">L: 0</span>
+        <span class="stat streak" id="streak-S">Streak: 0</span>
+      </div>
+      <div class="bet-history" id="history-S"></div>
+    </div>
+
+    <!-- Bcone -->
+    <div class="section-card" data-section="B" id="card-B">
+      <div class="section-header">
+        <span class="section-name">🔥 Bcone</span>
+        <span class="section-status status-watching" id="status-B">Watching</span>
+      </div>
+      <div class="period-info">
+        <span id="period-B">Period: --</span>
+        <span id="next-period-B">Next: --</span>
+      </div>
+      <div class="color-trend" id="trend-B">
+        <div class="empty-state"><div class="spinner"></div><br>Loading...</div>
+      </div>
+      <div class="section-info">
+        <div class="pattern-status no-pattern" id="pattern-B">No Pattern</div>
+        <div class="bet-info bet-none" id="bet-B">--</div>
+      </div>
+      <div class="section-stats">
+        <span class="stat win" id="wins-B">W: 0</span>
+        <span class="stat loss" id="losses-B">L: 0</span>
+        <span class="stat streak" id="streak-B">Streak: 0</span>
+      </div>
+      <div class="bet-history" id="history-B"></div>
+    </div>
+
+    <!-- Emerd -->
+    <div class="section-card" data-section="E" id="card-E">
+      <div class="section-header">
+        <span class="section-name">💎 Emerd</span>
+        <span class="section-status status-watching" id="status-E">Watching</span>
+      </div>
+      <div class="period-info">
+        <span id="period-E">Period: --</span>
+        <span id="next-period-E">Next: --</span>
+      </div>
+      <div class="color-trend" id="trend-E">
+        <div class="empty-state"><div class="spinner"></div><br>Loading...</div>
+      </div>
+      <div class="section-info">
+        <div class="pattern-status no-pattern" id="pattern-E">No Pattern</div>
+        <div class="bet-info bet-none" id="bet-E">--</div>
+      </div>
+      <div class="section-stats">
+        <span class="stat win" id="wins-E">W: 0</span>
+        <span class="stat loss" id="losses-E">L: 0</span>
+        <span class="stat streak" id="streak-E">Streak: 0</span>
+      </div>
+      <div class="bet-history" id="history-E"></div>
+    </div>
+
+  </main>
+
+  <!-- Activity Log -->
+  <section class="log-section">
+    <h2>📋 Activity Log</h2>
+    <div id="activity-log" class="activity-log">
+      <div class="empty-state">Waiting for data...</div>
+    </div>
+  </section>
+
+  <!-- Toast container -->
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

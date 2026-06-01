@@ -1,0 +1,9 @@
+# Netlify Configuration for Wingo Strategy Dashboard
+# Configures a CDN-level server proxy to bypass CORS restrictions without needing server.py
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://cooe02.in/:splat"
+  status = 200
+  force = true
+  headers = { X-From = "Netlify-CDN-Proxy" }
