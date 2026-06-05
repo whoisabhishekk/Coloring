@@ -10,7 +10,7 @@ const CONFIG = {
   SAAS_ID: 1,
   REFRESH_INTERVAL: 30000,       // 30 seconds
   PATTERN_LENGTH: 4,             // RGRG or GRGR
-  CONSECUTIVE_LOSSES_FOR_SIGNAL: 2,
+  CONSECUTIVE_LOSSES_FOR_SIGNAL: 1,
   MAX_LOG_ENTRIES: 80,
   MAX_DOTS_DISPLAY: 30,
   SECTIONS: {
@@ -24,7 +24,7 @@ const CONFIG = {
 // ============ APPLICATION STATE ============
 const state = {
   mode: 'WATCHING',        // 'WATCHING' | 'SIGNAL_ACTIVE'
-  activeSection: null,     // Key of the section with signal (e.g., 'P')
+  activeSection: null,     // Key of the locked section (e.g., 'S')
   sections: {},
   logs: [],
   refreshTimer: null,
@@ -456,19 +456,10 @@ function handleBetOutcome(key, won) {
   const section = state.sections[key];
 
   if (state.mode === 'WATCHING') {
-    // Check if this section hit 2 consecutive losses
+    // Check if any section has hit the loss threshold
     if (section.consecutiveLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
-      // TRIGGER SIGNAL!
-      state.mode = 'SIGNAL_ACTIVE';
-      state.activeSection = key;
-
-      addLog(
-        `🚨 [${section.name}] SIGNAL TRIGGERED! ${section.consecutiveLosses} consecutive losses detected!`,
-        'signal'
-      );
-
-      playAlertSound();
-      showSignalBanner(key);
+      // Find section with MOST losses → LOCK directly on it
+      lockHighestLossSection();
     }
   } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection === key) {
     if (won) {
@@ -486,12 +477,18 @@ function handleBetOutcome(key, won) {
 
       playAlertSound();
       showToast('✅ Profit achieved! Fresh monitoring started.', 'success');
+      sendSystemNotification(
+        '🎉 PROFIT!',
+        `${section.name} section mein WIN! Sab reset — fresh monitoring shuru.`
+      );
     } else {
-      // Loss in active section - keep watching for next pattern
+      // Loss in locked section — STAY LOCKED, wait for next pattern
       addLog(
-        `⚠️ [${section.name}] Loss in active signal section. Waiting for next pattern...`,
+        `⚠️ [${section.name}] Loss in locked section. Staying locked — waiting for next pattern...`,
         'loss'
       );
+
+      // Stay on same section, just update the banner
       updateSignalBanner(key);
     }
   }
@@ -511,22 +508,61 @@ function resetAllSections() {
   }
 }
 
-function checkSignalConditions() {
-  if (state.mode !== 'WATCHING') return;
+/**
+ * Find the section with the MOST consecutive losses and LOCK on it directly.
+ * No hunting — just pick the highest loser and lock.
+ */
+function lockHighestLossSection() {
+  let maxLosses = 0;
+  let bestKey = null;
 
   for (const [key, section] of Object.entries(state.sections)) {
-    if (section.consecutiveLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
-      state.mode = 'SIGNAL_ACTIVE';
-      state.activeSection = key;
+    if (section.consecutiveLosses > maxLosses) {
+      maxLosses = section.consecutiveLosses;
+      bestKey = key;
+    }
+  }
 
-      addLog(
-        `🚨 [${section.name}] SIGNAL! ${section.consecutiveLosses} consecutive losses!`,
-        'signal'
-      );
+  if (bestKey && maxLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
+    const section = state.sections[bestKey];
 
-      playAlertSound();
-      showSignalBanner(key);
-      break;
+    state.mode = 'SIGNAL_ACTIVE';
+    state.activeSection = bestKey;
+
+    // Force-create pendingBet if pattern exists (override skip logic)
+    if (section.patternDetected && section.patternColors && !section.pendingBet) {
+      const betColor = section.patternColors[section.patternColors.length - 1];
+      section.pendingBet = { color: betColor, period: section.nextPeriod };
+      section.skipUntilTrendBreaks = false;
+    }
+
+    addLog(
+      `🎯 [${section.name}] LOCKED! ${maxLosses} loss(es) — highest among all sections.`,
+      'signal'
+    );
+
+    playAlertSound();
+    showSignalBanner(bestKey);
+
+    // Send notification for signal lock
+    const betInfo = section.pendingBet
+      ? `Bet ${colorName(section.pendingBet.color)} on #${formatPeriod(section.pendingBet.period)}`
+      : 'Waiting for pattern...';
+    sendSystemNotification(
+      `🎯 LOCKED: ${section.name}`,
+      `${maxLosses} loss — ${betInfo}`
+    );
+  }
+}
+
+function checkSignalConditions() {
+  if (state.mode === 'WATCHING') {
+    // Check if any section has enough losses to trigger lock
+    for (const [key, section] of Object.entries(state.sections)) {
+      if (section.consecutiveLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
+        lockHighestLossSection();
+        break;
+      }
     }
   }
 }
@@ -582,7 +618,7 @@ function renderSection(key) {
   // Section status badge
   const statusEl = document.getElementById(`status-${key}`);
   if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection === key) {
-    statusEl.textContent = 'SIGNAL';
+    statusEl.textContent = '🎯 LOCKED';
     statusEl.className = 'section-status status-signal';
   } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection !== key) {
     statusEl.textContent = 'Paused';
@@ -737,19 +773,21 @@ function renderStrategyPanel() {
     } else {
       nextSignalText.textContent = 'Monitoring...';
     }
-  } else {
+    nextSignalText.style.color = '';
+
+  } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection) {
     const section = state.sections[state.activeSection];
-    modeText.textContent = 'SIGNAL ACTIVE';
+    modeText.textContent = '🎯 LOCKED';
     modeText.className = 'value signal-mode';
-    activeSectionText.textContent = `${section.emoji} ${section.name}`;
-    appStatus.textContent = `SIGNAL: ${section.name.toUpperCase()}`;
+    activeSectionText.textContent = `${section.emoji} ${section.name} (${section.consecutiveLosses} loss)`;
+    appStatus.textContent = `🎯 ${section.name.toUpperCase()}`;
     appStatus.className = 'status-badge signal-active';
 
     if (section.pendingBet) {
       nextSignalText.textContent = `Bet ${colorName(section.pendingBet.color)} on #${formatPeriod(section.pendingBet.period)}`;
       nextSignalText.style.color = section.pendingBet.color === 'G' ? 'var(--color-green)' : 'var(--color-red)';
     } else {
-      nextSignalText.textContent = 'Waiting for pattern...';
+      nextSignalText.textContent = 'Waiting for next pattern in locked section...';
       nextSignalText.style.color = '';
     }
   }
@@ -769,13 +807,15 @@ function updateLastUpdateTime() {
 
 // ============ SIGNAL BANNER ============
 
+
+
 function showSignalBanner(key) {
   const section = state.sections[key];
   const banner = document.getElementById('signal-banner');
   const mainText = document.getElementById('signal-main-text');
   const subText = document.getElementById('signal-sub-text');
 
-  mainText.textContent = `🚨 ${section.name.toUpperCase()} SIGNAL TRIGGERED!`;
+  mainText.textContent = `🎯 LOCKED ON: ${section.name.toUpperCase()}`;
 
   if (section.pendingBet) {
     const betColor = colorName(section.pendingBet.color);
@@ -788,21 +828,21 @@ function showSignalBanner(key) {
     if (state.lastNotifiedPeriod !== period) {
       state.lastNotifiedPeriod = period;
       sendSystemNotification(
-        `🚨 Wingo: ${section.name} Signal`,
+        `🎯 Wingo: LOCKED ${section.name}`,
         `Bet ${betColor} on Period #${periodStr}!`
       );
     }
   } else {
-    subText.textContent = `${section.consecutiveLosses} consecutive losses — Waiting for next RGRG/GRGR pattern`;
+    subText.textContent = `Locked on ${section.name} — Waiting for next pattern`;
     banner.className = 'signal-banner signal-red';
     
     // Notification logic
-    const uniqueKey = section.lastKnownPeriod + "_waiting";
+    const uniqueKey = section.lastKnownPeriod + "_locked";
     if (state.lastNotifiedPeriod !== uniqueKey) {
       state.lastNotifiedPeriod = uniqueKey;
       sendSystemNotification(
-        `🚨 Wingo: ${section.name} Alert`,
-        `${section.consecutiveLosses} Losses! Lock active, waiting for pattern...`
+        `🎯 Wingo: ${section.name} Locked`,
+        `Locked on ${section.name}, waiting for pattern...`
       );
     }
   }
@@ -880,9 +920,7 @@ async function refresh() {
     }
 
     // Check signal conditions after processing all sections
-    if (state.mode === 'WATCHING') {
-      checkSignalConditions();
-    }
+    checkSignalConditions();
 
     // If signal is active, update banner
     if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection) {
