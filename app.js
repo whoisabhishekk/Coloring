@@ -7,6 +7,7 @@
 const CONFIG = {
   // Local proxy handles CORS — requests go to /api/win/... → proxied to cooe02.in
   API_BASE: '/api',
+  FRESH_SIGNAL_STORAGE_KEY: 'wingo-fresh-signal-state',
   SAAS_ID: 1,
   REFRESH_INTERVAL: 30000,       // 30 seconds
   PATTERN_LENGTH: 4,             // RGRG or GRGR
@@ -55,7 +56,8 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     skipUntilTrendBreaks: false, // After loss: skip remaining trend, wait for new pattern
     isWatchCandidate: false,
     tradeReadySequence: 0,
-    freshStartArmed: false
+    freshStartArmed: false,
+    freshStartAnchorPeriod: 0
   };
 }
 
@@ -90,6 +92,30 @@ function formatTime(date) {
 function formatPeriod(period) {
   const str = String(period);
   return str.length > 6 ? str.slice(-3) : str;
+}
+
+function readStorage(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (e) {
+    // Ignore storage failures in restricted browsers.
+  }
+}
+
+function removeStorage(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch (e) {
+    // Ignore storage failures in restricted browsers.
+  }
 }
 
 // ============ SOUND SYSTEM ============
@@ -233,6 +259,62 @@ function sectionHasLiveAlternatingPattern(section) {
   return isAlternating(colors);
 }
 
+function getEligiblePeriodsForSignals(section) {
+  if (!section.freshStartAnchorPeriod) {
+    return section.periods;
+  }
+
+  return section.periods.filter(period => period.period > section.freshStartAnchorPeriod);
+}
+
+function persistFreshSignalState() {
+  const sections = {};
+  let hasFreshState = false;
+
+  for (const [key, section] of Object.entries(state.sections)) {
+    if (!section.freshStartAnchorPeriod && !section.freshStartArmed) continue;
+
+    hasFreshState = true;
+    sections[key] = {
+      freshStartAnchorPeriod: section.freshStartAnchorPeriod || 0,
+      freshStartArmed: section.freshStartArmed
+    };
+  }
+
+  if (!hasFreshState) {
+    removeStorage(CONFIG.FRESH_SIGNAL_STORAGE_KEY);
+    return;
+  }
+
+  writeStorage(
+    CONFIG.FRESH_SIGNAL_STORAGE_KEY,
+    JSON.stringify({ sections })
+  );
+}
+
+function restoreFreshSignalState() {
+  const raw = readStorage(CONFIG.FRESH_SIGNAL_STORAGE_KEY);
+  if (!raw) return;
+
+  try {
+    const parsed = JSON.parse(raw);
+    const savedSections = parsed.sections || {};
+
+    for (const [key, saved] of Object.entries(savedSections)) {
+      const section = state.sections[key];
+      if (!section) continue;
+
+      section.freshStartAnchorPeriod = Number(saved.freshStartAnchorPeriod) || 0;
+      section.freshStartArmed = Boolean(saved.freshStartArmed);
+      if (section.freshStartArmed) {
+        section.skipUntilTrendBreaks = true;
+      }
+    }
+  } catch (e) {
+    removeStorage(CONFIG.FRESH_SIGNAL_STORAGE_KEY);
+  }
+}
+
 function addWatchCandidate(key) {
   const section = state.sections[key];
   if (section.isWatchCandidate) return;
@@ -316,8 +398,7 @@ async function fetchAllSections() {
  * A WIN → resets consecutive losses to 0.
  */
 function scanHistoryForSection(section) {
-  const periods = section.periods;
-  if (periods.length < CONFIG.PATTERN_LENGTH + 1) return;
+  const periods = getEligiblePeriodsForSignals(section);
 
   // Reset tracking for fresh scan
   section.consecutiveLosses = 0;
@@ -325,6 +406,15 @@ function scanHistoryForSection(section) {
   section.totalLosses = 0;
   section.betHistory = [];
   section.skipUntilTrendBreaks = false;
+
+  if (section.freshStartArmed) {
+    section.skipUntilTrendBreaks = true;
+  }
+
+  if (periods.length < CONFIG.PATTERN_LENGTH + 1) {
+    checkCurrentPattern(section);
+    return;
+  }
 
   for (let i = CONFIG.PATTERN_LENGTH - 1; i < periods.length - 1; i++) {
     const patternColors = [];
@@ -372,7 +462,32 @@ function scanHistoryForSection(section) {
 }
 
 function checkCurrentPattern(section) {
-  const periods = section.periods;
+  const allPeriods = section.periods;
+  if (allPeriods.length < CONFIG.PATTERN_LENGTH) {
+    section.patternDetected = false;
+    section.patternColors = null;
+    return;
+  }
+
+  const latestColors = allPeriods
+    .slice(-CONFIG.PATTERN_LENGTH)
+    .map(period => getColor(period));
+
+  if (section.freshStartArmed) {
+    if (isAlternating(latestColors)) {
+      section.patternDetected = false;
+      section.patternColors = null;
+      persistFreshSignalState();
+      return;
+    }
+
+    section.freshStartArmed = false;
+    section.freshStartAnchorPeriod = allPeriods[allPeriods.length - 1].period;
+    section.skipUntilTrendBreaks = false;
+    persistFreshSignalState();
+  }
+
+  const periods = getEligiblePeriodsForSignals(section);
   if (periods.length < CONFIG.PATTERN_LENGTH) {
     section.patternDetected = false;
     section.patternColors = null;
@@ -380,18 +495,7 @@ function checkCurrentPattern(section) {
   }
 
   const lastN = periods.slice(-CONFIG.PATTERN_LENGTH);
-  const colors = lastN.map(p => getColor(p));
-
-  if (section.freshStartArmed) {
-    if (isAlternating(colors)) {
-      section.patternDetected = false;
-      section.patternColors = null;
-      return;
-    }
-
-    section.freshStartArmed = false;
-    section.skipUntilTrendBreaks = false;
-  }
+  const colors = lastN.map(period => getColor(period));
 
   if (isAlternating(colors)) {
     section.patternDetected = true;
@@ -582,7 +686,10 @@ function resetAllSections() {
     section.isWatchCandidate = false;
     section.tradeReadySequence = 0;
     section.freshStartArmed = false;
+    section.freshStartAnchorPeriod = 0;
   }
+
+  persistFreshSignalState();
 }
 
 function startFreshSignalsNow() {
@@ -594,6 +701,7 @@ function startFreshSignalsNow() {
 
   for (const section of Object.values(state.sections)) {
     const ignoreCurrentPattern = sectionHasLiveAlternatingPattern(section);
+    const anchorPeriod = section.lastKnownPeriod || section.periods[section.periods.length - 1]?.period || 0;
 
     section.consecutiveLosses = 0;
     section.pendingBet = null;
@@ -605,10 +713,12 @@ function startFreshSignalsNow() {
     section.isWatchCandidate = false;
     section.tradeReadySequence = 0;
     section.freshStartArmed = ignoreCurrentPattern;
+    section.freshStartAnchorPeriod = anchorPeriod;
     section.skipUntilTrendBreaks = ignoreCurrentPattern;
   }
 
   hideSignalBanner();
+  persistFreshSignalState();
   renderAll();
 
   addLog(
@@ -1093,6 +1203,7 @@ document.addEventListener('click', () => {
 
 // Start the app
 document.addEventListener('DOMContentLoaded', () => {
+  restoreFreshSignalState();
   initialize();
   updateNotificationStatus();
 });
