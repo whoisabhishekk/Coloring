@@ -118,6 +118,10 @@ function removeStorage(key) {
   }
 }
 
+function hasFreshSignalState(section) {
+  return Boolean(section.freshStartArmed || section.freshStartAnchorPeriod);
+}
+
 // ============ SOUND SYSTEM ============
 let audioCtx = null;
 
@@ -835,7 +839,7 @@ function renderSection(key) {
   } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection !== key) {
     statusEl.textContent = 'Paused';
     statusEl.className = 'section-status status-paused';
-  } else if (section.freshStartArmed) {
+  } else if (hasFreshSignalState(section)) {
     statusEl.textContent = 'Fresh Reset';
     statusEl.className = 'section-status status-watching';
   } else if (section.isWatchCandidate) {
@@ -971,7 +975,7 @@ function renderStrategyPanel() {
   const activeSectionText = document.getElementById('active-section-text');
   const nextSignalText = document.getElementById('next-signal-text');
   const appStatus = document.getElementById('app-status');
-  const freshResetActive = Object.values(state.sections).some(section => section.freshStartArmed);
+  const freshResetActive = Object.values(state.sections).some(section => hasFreshSignalState(section));
 
   if (state.mode === 'WATCHING') {
     const watchedSections = state.watchCandidates.map(key => state.sections[key].name);
