@@ -25,6 +25,7 @@ const CONFIG = {
 const state = {
   mode: 'WATCHING',        // 'WATCHING' | 'SIGNAL_ACTIVE'
   activeSection: null,     // Key of the locked section (e.g., 'S')
+  watchCandidates: [],     // Sections with 1+ losses, waiting for the first fresh trade
   sections: {},
   logs: [],
   refreshTimer: null,
@@ -32,7 +33,8 @@ const state = {
   progressTimer: null,
   initialized: false,
   lastSignalSoundTime: 0,
-  lastNotifiedPeriod: 0    // Prevents spamming duplicate alerts for the same period
+  lastNotifiedPeriod: 0,   // Prevents spamming duplicate alerts for the same period
+  tradeReadyCounter: 0
 };
 
 // Initialize section states
@@ -50,7 +52,9 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     betHistory: [],            // [{ period, betColor, actualColor, won }]
     patternDetected: false,
     patternColors: null,
-    skipUntilTrendBreaks: false // After loss: skip remaining trend, wait for new pattern
+    skipUntilTrendBreaks: false, // After loss: skip remaining trend, wait for new pattern
+    isWatchCandidate: false,
+    tradeReadySequence: 0
   };
 }
 
@@ -217,6 +221,49 @@ function addLog(message, type = 'info') {
   renderLog(entry);
 }
 
+function addWatchCandidate(key) {
+  const section = state.sections[key];
+  if (section.isWatchCandidate) return;
+
+  section.isWatchCandidate = true;
+  section.tradeReadySequence = 0;
+  state.watchCandidates.push(key);
+
+  addLog(
+    `👀 [${section.name}] ${section.consecutiveLosses} loss registered. Added to watchlist.`,
+    'info'
+  );
+}
+
+function removeWatchCandidate(key) {
+  const section = state.sections[key];
+  if (!section.isWatchCandidate) return;
+
+  section.isWatchCandidate = false;
+  section.tradeReadySequence = 0;
+  state.watchCandidates = state.watchCandidates.filter(candidateKey => candidateKey !== key);
+}
+
+function syncWatchCandidate(key) {
+  const section = state.sections[key];
+
+  if (section.consecutiveLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
+    addWatchCandidate(key);
+  } else {
+    removeWatchCandidate(key);
+  }
+}
+
+function markWatchTradeReady(key) {
+  const section = state.sections[key];
+
+  if (state.mode !== 'WATCHING') return;
+  if (!section.isWatchCandidate || !section.pendingBet || section.tradeReadySequence) return;
+
+  state.tradeReadyCounter++;
+  section.tradeReadySequence = state.tradeReadyCounter;
+}
+
 // ============ DATA FETCHING ============
 
 async function fetchSectionData(category) {
@@ -347,6 +394,7 @@ function processNewData(key, apiData) {
     section.lastKnownPeriod = newPeriods[newPeriods.length - 1].period;
     section.nextPeriod = newNextPeriod;
     scanHistoryForSection(section);
+    syncWatchCandidate(key);
 
     addLog(`${section.emoji} [${section.name}] Loaded ${newPeriods.length} periods | Losses: ${section.consecutiveLosses}`, 'info');
 
@@ -354,6 +402,7 @@ function processNewData(key, apiData) {
     if (section.patternDetected && !section.skipUntilTrendBreaks) {
       const betColor = section.patternColors[section.patternColors.length - 1];
       section.pendingBet = { color: betColor, period: newNextPeriod };
+      markWatchTradeReady(key);
       addLog(
         `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
         'pattern'
@@ -393,20 +442,24 @@ function processNewData(key, apiData) {
         section.totalWins++;
         section.consecutiveLosses = 0;  // Win resets loss count
         section.skipUntilTrendBreaks = false;
+        section.tradeReadySequence = 0;
         addLog(
           `✅ [${section.name}] WIN! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
           'win'
         );
+        syncWatchCandidate(key);
         // Handle win in signal flow
         handleBetOutcome(key, true);
       } else {
         section.totalLosses++;
         section.consecutiveLosses++;     // Loss counted IMMEDIATELY
         section.skipUntilTrendBreaks = true; // Skip rest of this trend
+        section.tradeReadySequence = 0;
         addLog(
           `❌ [${section.name}] LOSS #${section.consecutiveLosses}! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)}. Skipping trend, waiting for new pattern.`,
           'loss'
         );
+        syncWatchCandidate(key);
         // Handle loss in signal flow
         handleBetOutcome(key, false);
       }
@@ -432,6 +485,7 @@ function processNewData(key, apiData) {
         // FRESH new pattern → place bet
         const betColor = section.patternColors[section.patternColors.length - 1];
         section.pendingBet = { color: betColor, period: newNextPeriod };
+        markWatchTradeReady(key);
         addLog(
           `${section.emoji} [${section.name}] New pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
           'pattern'
@@ -455,13 +509,7 @@ function processNewData(key, apiData) {
 function handleBetOutcome(key, won) {
   const section = state.sections[key];
 
-  if (state.mode === 'WATCHING') {
-    // Check if any section has hit the loss threshold
-    if (section.consecutiveLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
-      // Find section with MOST losses → LOCK directly on it
-      lockHighestLossSection();
-    }
-  } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection === key) {
+  if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection === key) {
     if (won) {
       // PROFIT! Reset everything
       addLog(
@@ -495,6 +543,9 @@ function handleBetOutcome(key, won) {
 }
 
 function resetAllSections() {
+  state.watchCandidates = [];
+  state.tradeReadyCounter = 0;
+
   for (const key of Object.keys(state.sections)) {
     const section = state.sections[key];
     section.consecutiveLosses = 0;
@@ -505,65 +556,55 @@ function resetAllSections() {
     section.totalLosses = 0;
     section.betHistory = [];
     section.skipUntilTrendBreaks = false;
+    section.isWatchCandidate = false;
+    section.tradeReadySequence = 0;
   }
 }
 
 /**
- * Find the section with the MOST consecutive losses and LOCK on it directly.
- * No hunting — just pick the highest loser and lock.
+ * Among all watchlist sections, lock the one whose next valid trade appeared first.
  */
-function lockHighestLossSection() {
-  let maxLosses = 0;
+function lockFirstWatchTradeSection() {
   let bestKey = null;
+  let earliestTrade = Infinity;
 
-  for (const [key, section] of Object.entries(state.sections)) {
-    if (section.consecutiveLosses > maxLosses) {
-      maxLosses = section.consecutiveLosses;
+  for (const key of state.watchCandidates) {
+    const section = state.sections[key];
+    if (!section.pendingBet || !section.tradeReadySequence) continue;
+
+    if (section.tradeReadySequence < earliestTrade) {
+      earliestTrade = section.tradeReadySequence;
       bestKey = key;
     }
   }
 
-  if (bestKey && maxLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
-    const section = state.sections[bestKey];
+  if (!bestKey) return;
 
-    state.mode = 'SIGNAL_ACTIVE';
-    state.activeSection = bestKey;
+  const section = state.sections[bestKey];
 
-    // Force-create pendingBet if pattern exists (override skip logic)
-    if (section.patternDetected && section.patternColors && !section.pendingBet) {
-      const betColor = section.patternColors[section.patternColors.length - 1];
-      section.pendingBet = { color: betColor, period: section.nextPeriod };
-      section.skipUntilTrendBreaks = false;
-    }
+  state.mode = 'SIGNAL_ACTIVE';
+  state.activeSection = bestKey;
 
-    addLog(
-      `🎯 [${section.name}] LOCKED! ${maxLosses} loss(es) — highest among all sections.`,
-      'signal'
-    );
+  addLog(
+    `🎯 [${section.name}] LOCKED! First fresh trade among watchlist sections.`,
+    'signal'
+  );
 
-    playAlertSound();
-    showSignalBanner(bestKey);
+  playAlertSound();
+  showSignalBanner(bestKey);
 
-    // Send notification for signal lock
-    const betInfo = section.pendingBet
-      ? `Bet ${colorName(section.pendingBet.color)} on #${formatPeriod(section.pendingBet.period)}`
-      : 'Waiting for pattern...';
-    sendSystemNotification(
-      `🎯 LOCKED: ${section.name}`,
-      `${maxLosses} loss — ${betInfo}`
-    );
-  }
+  const betInfo = section.pendingBet
+    ? `Bet ${colorName(section.pendingBet.color)} on #${formatPeriod(section.pendingBet.period)}`
+    : 'Waiting for pattern...';
+  sendSystemNotification(
+    `🎯 LOCKED: ${section.name}`,
+    `Watchlist winner — ${betInfo}`
+  );
 }
 
 function checkSignalConditions() {
   if (state.mode === 'WATCHING') {
-    // Check if any section has enough losses to trigger lock
-    for (const [key, section] of Object.entries(state.sections)) {
-      if (section.consecutiveLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
-        lockHighestLossSection();
-        break;
-      }
-    }
+    lockFirstWatchTradeSection();
   }
 }
 
@@ -623,6 +664,9 @@ function renderSection(key) {
   } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection !== key) {
     statusEl.textContent = 'Paused';
     statusEl.className = 'section-status status-paused';
+  } else if (section.isWatchCandidate) {
+    statusEl.textContent = '1L Watch';
+    statusEl.className = 'section-status status-hunting';
   } else if (section.patternDetected) {
     statusEl.textContent = 'Pattern!';
     statusEl.className = 'section-status status-pattern';
@@ -633,7 +677,7 @@ function renderSection(key) {
 
   // Card classes
   const cardEl = document.getElementById(`card-${key}`);
-  cardEl.classList.remove('active', 'signal-triggered', 'paused');
+  cardEl.classList.remove('active', 'signal-triggered', 'paused', 'hunting');
 
   if (state.mode === 'SIGNAL_ACTIVE') {
     if (state.activeSection === key) {
@@ -641,6 +685,8 @@ function renderSection(key) {
     } else {
       cardEl.classList.add('paused');
     }
+  } else if (section.isWatchCandidate) {
+    cardEl.classList.add('hunting');
   } else if (section.patternDetected) {
     cardEl.classList.add('active');
   }
@@ -753,23 +799,18 @@ function renderStrategyPanel() {
   const appStatus = document.getElementById('app-status');
 
   if (state.mode === 'WATCHING') {
+    const watchedSections = state.watchCandidates.map(key => state.sections[key].name);
+
     modeText.textContent = 'WATCHING';
     modeText.className = 'value watching-mode';
-    activeSectionText.textContent = 'All Sections';
-    appStatus.textContent = 'WATCHING ALL';
+    activeSectionText.textContent = watchedSections.length > 0
+      ? watchedSections.join(', ')
+      : 'All Sections';
+    appStatus.textContent = watchedSections.length > 0 ? 'WATCHING 1L' : 'WATCHING ALL';
     appStatus.className = 'status-badge watching';
 
-    // Find section closest to signal (highest consecutive losses)
-    let maxLosses = 0;
-    let closestSection = null;
-    for (const [key, section] of Object.entries(state.sections)) {
-      if (section.consecutiveLosses > maxLosses) {
-        maxLosses = section.consecutiveLosses;
-        closestSection = section;
-      }
-    }
-    if (closestSection && maxLosses > 0) {
-      nextSignalText.textContent = `${closestSection.name}: ${maxLosses}/${CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL} losses`;
+    if (watchedSections.length > 0) {
+      nextSignalText.textContent = `Waiting for first fresh trade in: ${watchedSections.join(', ')}`;
     } else {
       nextSignalText.textContent = 'Monitoring...';
     }
