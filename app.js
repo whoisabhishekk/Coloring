@@ -54,7 +54,8 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     patternColors: null,
     skipUntilTrendBreaks: false, // After loss: skip remaining trend, wait for new pattern
     isWatchCandidate: false,
-    tradeReadySequence: 0
+    tradeReadySequence: 0,
+    freshStartArmed: false
   };
 }
 
@@ -205,6 +206,7 @@ function sendSystemNotification(title, message) {
 // Expose functions globally for HTML event attributes
 window.requestNotificationPermission = requestNotificationPermission;
 window.updateNotificationStatus = updateNotificationStatus;
+window.startFreshSignalsNow = startFreshSignalsNow;
 
 // ============ LOGGING ============
 
@@ -219,6 +221,16 @@ function addLog(message, type = 'info') {
   if (state.logs.length > CONFIG.MAX_LOG_ENTRIES) state.logs.pop();
 
   renderLog(entry);
+}
+
+function sectionHasLiveAlternatingPattern(section) {
+  if (section.periods.length < CONFIG.PATTERN_LENGTH) return false;
+
+  const colors = section.periods
+    .slice(-CONFIG.PATTERN_LENGTH)
+    .map(period => getColor(period));
+
+  return isAlternating(colors);
 }
 
 function addWatchCandidate(key) {
@@ -369,6 +381,17 @@ function checkCurrentPattern(section) {
 
   const lastN = periods.slice(-CONFIG.PATTERN_LENGTH);
   const colors = lastN.map(p => getColor(p));
+
+  if (section.freshStartArmed) {
+    if (isAlternating(colors)) {
+      section.patternDetected = false;
+      section.patternColors = null;
+      return;
+    }
+
+    section.freshStartArmed = false;
+    section.skipUntilTrendBreaks = false;
+  }
 
   if (isAlternating(colors)) {
     section.patternDetected = true;
@@ -558,7 +581,45 @@ function resetAllSections() {
     section.skipUntilTrendBreaks = false;
     section.isWatchCandidate = false;
     section.tradeReadySequence = 0;
+    section.freshStartArmed = false;
   }
+}
+
+function startFreshSignalsNow() {
+  state.mode = 'WATCHING';
+  state.activeSection = null;
+  state.watchCandidates = [];
+  state.tradeReadyCounter = 0;
+  state.lastNotifiedPeriod = 0;
+
+  for (const section of Object.values(state.sections)) {
+    const ignoreCurrentPattern = sectionHasLiveAlternatingPattern(section);
+
+    section.consecutiveLosses = 0;
+    section.pendingBet = null;
+    section.patternDetected = false;
+    section.patternColors = null;
+    section.totalWins = 0;
+    section.totalLosses = 0;
+    section.betHistory = [];
+    section.isWatchCandidate = false;
+    section.tradeReadySequence = 0;
+    section.freshStartArmed = ignoreCurrentPattern;
+    section.skipUntilTrendBreaks = ignoreCurrentPattern;
+  }
+
+  hideSignalBanner();
+  renderAll();
+
+  addLog(
+    '🔄 Manual fresh reset applied. Current pattern cleared, now watching only fresh signals from this point.',
+    'reset'
+  );
+  showToast('Fresh signal mode started from current point.', 'success');
+  sendSystemNotification(
+    '🔄 Fresh Signals',
+    'Current pattern and lock reset. Now watching fresh signals from this point.'
+  );
 }
 
 /**
@@ -664,6 +725,9 @@ function renderSection(key) {
   } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection !== key) {
     statusEl.textContent = 'Paused';
     statusEl.className = 'section-status status-paused';
+  } else if (section.freshStartArmed) {
+    statusEl.textContent = 'Fresh Reset';
+    statusEl.className = 'section-status status-watching';
   } else if (section.isWatchCandidate) {
     statusEl.textContent = '1L Watch';
     statusEl.className = 'section-status status-hunting';
@@ -797,20 +861,29 @@ function renderStrategyPanel() {
   const activeSectionText = document.getElementById('active-section-text');
   const nextSignalText = document.getElementById('next-signal-text');
   const appStatus = document.getElementById('app-status');
+  const freshResetActive = Object.values(state.sections).some(section => section.freshStartArmed);
 
   if (state.mode === 'WATCHING') {
     const watchedSections = state.watchCandidates.map(key => state.sections[key].name);
 
-    modeText.textContent = 'WATCHING';
-    modeText.className = 'value watching-mode';
+    modeText.textContent = freshResetActive ? 'FRESH WATCH' : 'WATCHING';
+    modeText.className = freshResetActive ? 'value reset-mode' : 'value watching-mode';
     activeSectionText.textContent = watchedSections.length > 0
       ? watchedSections.join(', ')
       : 'All Sections';
-    appStatus.textContent = watchedSections.length > 0 ? 'WATCHING 1L' : 'WATCHING ALL';
+    if (watchedSections.length > 0) {
+      appStatus.textContent = 'WATCHING 1L';
+    } else if (freshResetActive) {
+      appStatus.textContent = 'FRESH START';
+    } else {
+      appStatus.textContent = 'WATCHING ALL';
+    }
     appStatus.className = 'status-badge watching';
 
     if (watchedSections.length > 0) {
       nextSignalText.textContent = `Waiting for first fresh trade in: ${watchedSections.join(', ')}`;
+    } else if (freshResetActive) {
+      nextSignalText.textContent = 'Fresh reset active. Waiting for current trend to clear and new pattern to form.';
     } else {
       nextSignalText.textContent = 'Monitoring...';
     }
