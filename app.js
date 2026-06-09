@@ -125,29 +125,167 @@ function hasFreshSignalState(section) {
 // ============ SOUND SYSTEM ============
 let audioCtx = null;
 
+function ensureAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+/** Premium alert sound — ascending chime with harmonics */
 function playAlertSound() {
   const now = Date.now();
-  if (now - state.lastSignalSoundTime < 3000) return; // Debounce 3s
+  if (now - state.lastSignalSoundTime < 3000) return;
   state.lastSignalSoundTime = now;
 
   try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = ensureAudioCtx();
+    const t = ctx.currentTime;
 
-    // Triple beep
-    [0, 200, 400].forEach(delay => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.frequency.value = delay === 200 ? 1000 : 880;
+    // Ascending chime notes (C5, E5, G5, C6)
+    const notes = [523.25, 659.25, 783.99, 1046.50];
+    notes.forEach((freq, i) => {
+      const delay = i * 0.12;
+      // Main tone
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
       osc.type = 'sine';
-      gain.gain.setValueAtTime(0.25, audioCtx.currentTime + delay / 1000);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + delay / 1000 + 0.15);
-      osc.start(audioCtx.currentTime + delay / 1000);
-      osc.stop(audioCtx.currentTime + delay / 1000 + 0.15);
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t + delay);
+      gain.gain.linearRampToValueAtTime(0.22, t + delay + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.4);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t + delay);
+      osc.stop(t + delay + 0.4);
+
+      // Harmonic shimmer (octave above, quieter)
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'triangle';
+      osc2.frequency.value = freq * 2;
+      gain2.gain.setValueAtTime(0, t + delay);
+      gain2.gain.linearRampToValueAtTime(0.06, t + delay + 0.02);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.25);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(t + delay);
+      osc2.stop(t + delay + 0.25);
     });
+
+    // Sub-bass impact
+    const sub = ctx.createOscillator();
+    const subGain = ctx.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(80, t);
+    sub.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+    subGain.gain.setValueAtTime(0.3, t);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    sub.connect(subGain);
+    subGain.connect(ctx.destination);
+    sub.start(t);
+    sub.stop(t + 0.3);
+
   } catch (e) {
     console.warn('Sound unavailable:', e);
+  }
+}
+
+/**
+ * TRADE READY SOUND — Loud, attention-grabbing alert
+ * Plays a powerful "cash register ka-ching + siren + victory fanfare" combo
+ * This is the MAIN sound that plays when a trade signal arrives
+ */
+function playTradeReadySound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const t = ctx.currentTime;
+
+    // ── Part 1: Siren sweep (attention grabber) ──
+    const siren = ctx.createOscillator();
+    const sirenGain = ctx.createGain();
+    siren.type = 'sawtooth';
+    siren.frequency.setValueAtTime(600, t);
+    siren.frequency.linearRampToValueAtTime(1200, t + 0.15);
+    siren.frequency.linearRampToValueAtTime(600, t + 0.3);
+    siren.frequency.linearRampToValueAtTime(1200, t + 0.45);
+    sirenGain.gain.setValueAtTime(0.12, t);
+    sirenGain.gain.setValueAtTime(0.12, t + 0.4);
+    sirenGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    siren.connect(sirenGain);
+    sirenGain.connect(ctx.destination);
+    siren.start(t);
+    siren.stop(t + 0.5);
+
+    // ── Part 2: Ka-ching (metallic ring) ──
+    const ringDelay = 0.5;
+    [2637, 3520, 4186].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t + ringDelay);
+      gain.gain.linearRampToValueAtTime(0.08, t + ringDelay + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + ringDelay + 0.4);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t + ringDelay);
+      osc.stop(t + ringDelay + 0.4);
+    });
+
+    // ── Part 3: Victory fanfare (ascending power chord) ──
+    const fanfareDelay = 0.9;
+    const fanfareNotes = [
+      { freq: 523.25, time: 0, dur: 0.5 },     // C5
+      { freq: 659.25, time: 0.1, dur: 0.45 },   // E5
+      { freq: 783.99, time: 0.2, dur: 0.4 },     // G5
+      { freq: 1046.50, time: 0.35, dur: 0.5 },   // C6 (hold!)
+      { freq: 1318.51, time: 0.45, dur: 0.6 },   // E6 (finale!)
+    ];
+
+    fanfareNotes.forEach(note => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = note.freq;
+      const start = t + fanfareDelay + note.time;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.2, start + 0.03);
+      gain.gain.setValueAtTime(0.18, start + note.dur * 0.6);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + note.dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + note.dur);
+
+      // Shimmer harmonics
+      const shim = ctx.createOscillator();
+      const shimGain = ctx.createGain();
+      shim.type = 'triangle';
+      shim.frequency.value = note.freq * 2;
+      shimGain.gain.setValueAtTime(0, start);
+      shimGain.gain.linearRampToValueAtTime(0.04, start + 0.03);
+      shimGain.gain.exponentialRampToValueAtTime(0.001, start + note.dur * 0.7);
+      shim.connect(shimGain);
+      shimGain.connect(ctx.destination);
+      shim.start(start);
+      shim.stop(start + note.dur * 0.7);
+    });
+
+    // ── Part 4: Sub-bass boom at start ──
+    const boom = ctx.createOscillator();
+    const boomGain = ctx.createGain();
+    boom.type = 'sine';
+    boom.frequency.setValueAtTime(100, t);
+    boom.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+    boomGain.gain.setValueAtTime(0.35, t);
+    boomGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    boom.connect(boomGain);
+    boomGain.connect(ctx.destination);
+    boom.start(t);
+    boom.stop(t + 0.5);
+
+  } catch (e) {
+    console.warn('Trade sound unavailable:', e);
   }
 }
 
@@ -767,6 +905,7 @@ function lockFirstWatchTradeSection() {
 
   playAlertSound();
   showSignalBanner(bestKey);
+  showTradeAlert(bestKey);  // Full-screen popup with premium sound
 
   const betInfo = section.pendingBet
     ? `Bet ${colorName(section.pendingBet.color)} on #${formatPeriod(section.pendingBet.period)}`
@@ -1094,6 +1233,7 @@ function updateSignalBanner(key) {
     const period = section.pendingBet.period;
     if (state.lastNotifiedPeriod !== period) {
       state.lastNotifiedPeriod = period;
+      showTradeAlert(key);  // Show full-screen popup for new bet in locked section
       sendSystemNotification(
         `🚨 Wingo: ${section.name} Bet`,
         `Next Bet: ${betColor} on Period #${periodStr}!`
@@ -1109,6 +1249,110 @@ function hideSignalBanner() {
   banner.classList.add('hidden');
   document.getElementById('app-header').style.paddingTop = '';
 }
+
+// ============ TRADE ALERT POPUP ============
+
+let tradeAlertSoundInterval = null;
+
+function showTradeAlert(sectionKey) {
+  const section = state.sections[sectionKey];
+  if (!section || !section.pendingBet) return;
+
+  const overlay = document.getElementById('trade-alert-overlay');
+  const modal = overlay.querySelector('.trade-alert-modal');
+  const icon = document.getElementById('trade-alert-icon');
+  const title = document.getElementById('trade-alert-title');
+  const sectionEl = document.getElementById('trade-alert-section');
+  const badge = document.getElementById('trade-alert-badge');
+  const colorText = document.getElementById('trade-alert-color-text');
+  const periodEl = document.getElementById('trade-alert-period');
+  const messageEl = document.getElementById('trade-alert-message');
+
+  const betColor = section.pendingBet.color;
+  const betColorName = colorName(betColor);
+  const periodStr = formatPeriod(section.pendingBet.period);
+  const isGreen = betColor === 'G';
+
+  // Set content
+  icon.textContent = '🚨';
+  title.textContent = 'TRADE AA GYA!';
+  sectionEl.textContent = `${section.emoji} ${section.name} — LOCKED`;
+  colorText.textContent = betColorName;
+  periodEl.textContent = `Period #${periodStr}`;
+  messageEl.textContent = `Abhi ${betColorName} pe bet lagao! Jaldi karo!`;
+
+  // Set color mode
+  modal.classList.toggle('green-mode', isGreen);
+  badge.className = `trade-alert-color-badge badge-${betColorName.toLowerCase()}`;
+
+  // Remove old sound bar, add new
+  modal.querySelectorAll('.trade-alert-sound-bar').forEach(el => el.remove());
+  const soundBar = document.createElement('div');
+  soundBar.className = 'trade-alert-sound-bar';
+  modal.appendChild(soundBar);
+
+  // Spawn particles
+  spawnTradeParticles(isGreen ? '#2ED573' : '#FF4757');
+
+  // Show overlay
+  overlay.classList.remove('hidden');
+
+  // Play the premium trade sound immediately
+  playTradeReadySound();
+
+  // Repeat sound every 4 seconds until dismissed
+  clearInterval(tradeAlertSoundInterval);
+  tradeAlertSoundInterval = setInterval(() => {
+    playTradeReadySound();
+  }, 4000);
+
+  // Auto dismiss after 30 seconds
+  if (showTradeAlert._autoDismissTimer) clearTimeout(showTradeAlert._autoDismissTimer);
+  showTradeAlert._autoDismissTimer = setTimeout(() => {
+    dismissTradeAlert();
+  }, 30000);
+}
+
+function dismissTradeAlert() {
+  const overlay = document.getElementById('trade-alert-overlay');
+  overlay.classList.add('hidden');
+
+  // Stop repeated sound
+  clearInterval(tradeAlertSoundInterval);
+  tradeAlertSoundInterval = null;
+
+  // Clear auto dismiss
+  if (showTradeAlert._autoDismissTimer) {
+    clearTimeout(showTradeAlert._autoDismissTimer);
+    showTradeAlert._autoDismissTimer = null;
+  }
+
+  // Clear particles
+  const particlesContainer = document.getElementById('trade-particles');
+  particlesContainer.innerHTML = '';
+}
+
+function spawnTradeParticles(color) {
+  const container = document.getElementById('trade-particles');
+  container.innerHTML = '';
+
+  const particleColors = [color, '#38bdf8', '#a855f7', '#F59E0B', '#22D3EE'];
+
+  for (let i = 0; i < 30; i++) {
+    const particle = document.createElement('div');
+    particle.className = 'trade-particle';
+    particle.style.left = `${Math.random() * 100}%`;
+    particle.style.backgroundColor = particleColors[Math.floor(Math.random() * particleColors.length)];
+    particle.style.animationDelay = `${Math.random() * 3}s`;
+    particle.style.animationDuration = `${2 + Math.random() * 2}s`;
+    particle.style.width = `${4 + Math.random() * 6}px`;
+    particle.style.height = particle.style.width;
+    container.appendChild(particle);
+  }
+}
+
+// Expose functions globally
+window.dismissTradeAlert = dismissTradeAlert;
 
 // ============ TOAST NOTIFICATIONS ============
 

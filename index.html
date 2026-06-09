@@ -184,6 +184,26 @@
     </div>
   </section>
 
+  <!-- Trade Alert Popup Overlay -->
+  <div id="trade-alert-overlay" class="trade-alert-overlay hidden">
+    <div class="trade-alert-particles" id="trade-particles"></div>
+    <div class="trade-alert-modal">
+      <div class="trade-alert-glow-ring"></div>
+      <div class="trade-alert-icon" id="trade-alert-icon">🚨</div>
+      <div class="trade-alert-title" id="trade-alert-title">TRADE SIGNAL!</div>
+      <div class="trade-alert-section" id="trade-alert-section">--</div>
+      <div class="trade-alert-color-badge" id="trade-alert-badge">
+        <span class="trade-alert-color-dot" id="trade-alert-dot"></span>
+        <span id="trade-alert-color-text">--</span>
+      </div>
+      <div class="trade-alert-period" id="trade-alert-period">Period: --</div>
+      <div class="trade-alert-message" id="trade-alert-message">Bet now!</div>
+      <button class="trade-alert-dismiss" id="trade-alert-dismiss" onclick="dismissTradeAlert()">
+        ✓ SAMAJH GAYA — DISMISS
+      </button>
+    </div>
+  </div>
+
   <!-- Toast container -->
   <div id="toast" class="toast"></div>
 
