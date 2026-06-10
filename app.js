@@ -450,7 +450,7 @@ function restoreFreshSignalState() {
       section.freshStartAnchorPeriod = Number(saved.freshStartAnchorPeriod) || 0;
       section.freshStartArmed = Boolean(saved.freshStartArmed);
       if (section.freshStartArmed) {
-        section.skipUntilTrendBreaks = true;
+        section.strategyState = 'WAITING_FOR_TREND_BREAK';
       }
     }
   } catch (e) {
@@ -518,6 +518,15 @@ async function fetchAllSections() {
 }
 
 // ============ PATTERN DETECTION & STRATEGY ENGINE ============
+
+/**
+ * 🎰 SIMPLE STRATEGY ENGINE:
+ * 1. Wait for 1 virtual loss (bet same color on a new pattern).
+ * 2. Once it loses (trend continues), wait for this alternating trend to BREAK (2 same colors).
+ * 3. Once trend breaks, hunt for the NEXT new pattern to appear.
+ * 4. When next pattern appears, trigger LIVE signal on the same color.
+ * 5. After live bet resolves (win or loss), repeat step 1 again.
+ */
 
 /**
  * Scan history using the pattern state machine.
@@ -669,7 +678,7 @@ function checkCurrentPattern(section) {
 
     section.freshStartArmed = false;
     section.freshStartAnchorPeriod = allPeriods[allPeriods.length - 1].period;
-    section.skipUntilTrendBreaks = false;
+    section.strategyState = 'HUNTING';
     persistFreshSignalState();
   }
 
