@@ -470,8 +470,8 @@ function showTradeSignal(key) {
   // Show signal banner at top
   showSignalBanner(key);
 
-  // Show full-screen trade alert popup with sound
-  showTradeAlert(key);
+  // Play the trade ready sound (no popup)
+  playTradeReadySound();
 
   // Send push notification
   sendSystemNotification(
@@ -873,13 +873,17 @@ function renderSection(key) {
 
   // Card classes
   const cardEl = document.getElementById(`card-${key}`);
-  cardEl.classList.remove('active', 'signal-triggered', 'paused', 'hunting');
+  cardEl.classList.remove('active', 'signal-triggered', 'signal-green', 'signal-red', 'paused', 'hunting');
 
   if (section.pendingBet) {
     cardEl.classList.add('signal-triggered');
+    cardEl.classList.add(section.pendingBet.color === 'G' ? 'signal-green' : 'signal-red');
   } else if (section.patternDetected) {
     cardEl.classList.add('active');
   }
+
+  // In-card trade banner
+  renderTradeBanner(key);
 
   // Bet history ribbon
   renderBetHistory(key);
@@ -1103,7 +1107,7 @@ function updateSignalBanner(key) {
     const period = section.pendingBet.period;
     if (state.lastNotifiedPeriod !== period) {
       state.lastNotifiedPeriod = period;
-      showTradeAlert(key);  // Show full-screen popup for new bet in locked section
+      playTradeReadySound();  // Play sound for new bet signal
       sendSystemNotification(
         `🚨 Wingo: ${section.name} Bet`,
         `Next Bet: ${betColor} on Period #${periodStr}!`
@@ -1120,109 +1124,33 @@ function hideSignalBanner() {
   document.getElementById('app-header').style.paddingTop = '';
 }
 
-// ============ TRADE ALERT POPUP ============
+// ============ IN-CARD TRADE BANNER ============
 
-let tradeAlertSoundInterval = null;
+function renderTradeBanner(key) {
+  const section = state.sections[key];
+  const banner = document.getElementById(`trade-banner-${key}`);
+  if (!banner) return;
 
-function showTradeAlert(sectionKey) {
-  const section = state.sections[sectionKey];
-  if (!section || !section.pendingBet) return;
+  const colorEl = document.getElementById(`trade-banner-color-${key}`);
+  const periodEl = document.getElementById(`trade-banner-period-${key}`);
 
-  const overlay = document.getElementById('trade-alert-overlay');
-  const modal = overlay.querySelector('.trade-alert-modal');
-  const icon = document.getElementById('trade-alert-icon');
-  const title = document.getElementById('trade-alert-title');
-  const sectionEl = document.getElementById('trade-alert-section');
-  const badge = document.getElementById('trade-alert-badge');
-  const colorText = document.getElementById('trade-alert-color-text');
-  const periodEl = document.getElementById('trade-alert-period');
-  const messageEl = document.getElementById('trade-alert-message');
+  if (section.pendingBet) {
+    const betColor = section.pendingBet.color;
+    const betColorLabel = colorName(betColor);
+    const periodStr = formatPeriod(section.pendingBet.period);
+    const isGreen = betColor === 'G';
 
-  const betColor = section.pendingBet.color;
-  const betColorName = colorName(betColor);
-  const periodStr = formatPeriod(section.pendingBet.period);
-  const isGreen = betColor === 'G';
+    colorEl.textContent = `🎯 ${betColorLabel} pe lagao!`;
+    colorEl.className = `trade-banner-color ${isGreen ? 'banner-green' : 'banner-red'}`;
+    periodEl.textContent = `Period #${periodStr}`;
 
-  // Set content
-  icon.textContent = '🚨';
-  title.textContent = 'TRADE AA GYA!';
-  sectionEl.textContent = `${section.emoji} ${section.name} — LOCKED`;
-  colorText.textContent = betColorName;
-  periodEl.textContent = `Period #${periodStr}`;
-  messageEl.textContent = `Abhi ${betColorName} pe bet lagao! Jaldi karo!`;
-
-  // Set color mode
-  modal.classList.toggle('green-mode', isGreen);
-  badge.className = `trade-alert-color-badge badge-${betColorName.toLowerCase()}`;
-
-  // Remove old sound bar, add new
-  modal.querySelectorAll('.trade-alert-sound-bar').forEach(el => el.remove());
-  const soundBar = document.createElement('div');
-  soundBar.className = 'trade-alert-sound-bar';
-  modal.appendChild(soundBar);
-
-  // Spawn particles
-  spawnTradeParticles(isGreen ? '#2ED573' : '#FF4757');
-
-  // Show overlay
-  overlay.classList.remove('hidden');
-
-  // Play the premium trade sound immediately
-  playTradeReadySound();
-
-  // Repeat sound every 4 seconds until dismissed
-  clearInterval(tradeAlertSoundInterval);
-  tradeAlertSoundInterval = setInterval(() => {
-    playTradeReadySound();
-  }, 4000);
-
-  // Auto dismiss after 30 seconds
-  if (showTradeAlert._autoDismissTimer) clearTimeout(showTradeAlert._autoDismissTimer);
-  showTradeAlert._autoDismissTimer = setTimeout(() => {
-    dismissTradeAlert();
-  }, 30000);
-}
-
-function dismissTradeAlert() {
-  const overlay = document.getElementById('trade-alert-overlay');
-  overlay.classList.add('hidden');
-
-  // Stop repeated sound
-  clearInterval(tradeAlertSoundInterval);
-  tradeAlertSoundInterval = null;
-
-  // Clear auto dismiss
-  if (showTradeAlert._autoDismissTimer) {
-    clearTimeout(showTradeAlert._autoDismissTimer);
-    showTradeAlert._autoDismissTimer = null;
-  }
-
-  // Clear particles
-  const particlesContainer = document.getElementById('trade-particles');
-  particlesContainer.innerHTML = '';
-}
-
-function spawnTradeParticles(color) {
-  const container = document.getElementById('trade-particles');
-  container.innerHTML = '';
-
-  const particleColors = [color, '#38bdf8', '#a855f7', '#F59E0B', '#22D3EE'];
-
-  for (let i = 0; i < 30; i++) {
-    const particle = document.createElement('div');
-    particle.className = 'trade-particle';
-    particle.style.left = `${Math.random() * 100}%`;
-    particle.style.backgroundColor = particleColors[Math.floor(Math.random() * particleColors.length)];
-    particle.style.animationDelay = `${Math.random() * 3}s`;
-    particle.style.animationDuration = `${2 + Math.random() * 2}s`;
-    particle.style.width = `${4 + Math.random() * 6}px`;
-    particle.style.height = particle.style.width;
-    container.appendChild(particle);
+    banner.classList.remove('hidden', 'banner-mode-green', 'banner-mode-red');
+    banner.classList.add(isGreen ? 'banner-mode-green' : 'banner-mode-red');
+  } else {
+    banner.classList.add('hidden');
+    banner.classList.remove('banner-mode-green', 'banner-mode-red');
   }
 }
-
-// Expose functions globally
-window.dismissTradeAlert = dismissTradeAlert;
 
 // ============ TOAST NOTIFICATIONS ============
 

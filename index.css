@@ -1039,303 +1039,151 @@ body {
   color: white;
 }
 
-/* ---------- Trade Alert Overlay ---------- */
-.trade-alert-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 5000;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* ---------- In-Card Trade Banner ---------- */
+.trade-card-banner {
+  margin: 8px -16px;
+  padding: 14px 16px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  animation: tradeOverlayIn 0.4s ease-out;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
   overflow: hidden;
+  animation: tradeBannerSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.trade-alert-overlay.hidden {
+.trade-card-banner.hidden {
   display: none !important;
 }
 
-@keyframes tradeOverlayIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+/* Red mode */
+.trade-card-banner.banner-mode-red {
+  background: linear-gradient(135deg, rgba(255, 71, 87, 0.18), rgba(255, 71, 87, 0.06));
+  border-top-color: rgba(255, 71, 87, 0.25);
+  border-bottom-color: rgba(255, 71, 87, 0.25);
 }
 
-/* Floating particles */
-.trade-alert-particles {
+/* Green mode */
+.trade-card-banner.banner-mode-green {
+  background: linear-gradient(135deg, rgba(46, 213, 115, 0.18), rgba(46, 213, 115, 0.06));
+  border-top-color: rgba(46, 213, 115, 0.25);
+  border-bottom-color: rgba(46, 213, 115, 0.25);
+}
+
+/* Animated glow bar at top of banner */
+.trade-card-banner::before {
+  content: '';
   position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.trade-particle {
-  position: absolute;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  opacity: 0;
-  animation: particleFloat 3s ease-in-out infinite;
-}
-
-@keyframes particleFloat {
-  0% { opacity: 0; transform: translateY(100vh) scale(0); }
-  20% { opacity: 1; }
-  80% { opacity: 0.6; }
-  100% { opacity: 0; transform: translateY(-20vh) scale(1.5); }
-}
-
-/* Main modal */
-.trade-alert-modal {
-  position: relative;
-  background: rgba(14, 14, 42, 0.95);
-  border: 2px solid rgba(255, 71, 87, 0.5);
-  border-radius: 28px;
-  padding: 40px 36px 32px;
-  text-align: center;
-  max-width: 380px;
-  width: 90%;
-  box-shadow:
-    0 0 60px rgba(255, 71, 87, 0.25),
-    0 0 120px rgba(255, 71, 87, 0.1),
-    0 20px 60px rgba(0, 0, 0, 0.6);
-  animation: tradeModalIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-  z-index: 2;
-}
-
-.trade-alert-modal.green-mode {
-  border-color: rgba(46, 213, 115, 0.5);
-  box-shadow:
-    0 0 60px rgba(46, 213, 115, 0.25),
-    0 0 120px rgba(46, 213, 115, 0.1),
-    0 20px 60px rgba(0, 0, 0, 0.6);
-}
-
-@keyframes tradeModalIn {
-  from {
-    opacity: 0;
-    transform: scale(0.7) translateY(30px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-/* Glow ring behind modal */
-.trade-alert-glow-ring {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 300px;
-  height: 300px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 71, 87, 0.2) 0%, transparent 70%);
-  animation: glowRingPulse 2s ease-in-out infinite;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.trade-alert-modal.green-mode .trade-alert-glow-ring {
-  background: radial-gradient(circle, rgba(46, 213, 115, 0.2) 0%, transparent 70%);
-}
-
-@keyframes glowRingPulse {
-  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
-  50% { transform: translate(-50%, -50%) scale(1.3); opacity: 1; }
-}
-
-/* Alert icon */
-.trade-alert-icon {
-  font-size: 3.5rem;
-  margin-bottom: 8px;
-  animation: tradeIconShake 0.5s ease-in-out infinite alternate;
-  filter: drop-shadow(0 0 20px rgba(255, 71, 87, 0.6));
-}
-
-@keyframes tradeIconShake {
-  0% { transform: rotate(-8deg) scale(1); }
-  100% { transform: rotate(8deg) scale(1.1); }
-}
-
-/* Title */
-.trade-alert-title {
-  font-family: var(--font-primary);
-  font-size: 1.6rem;
-  font-weight: 900;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: #fff;
-  margin-bottom: 6px;
-  text-shadow: 0 0 20px rgba(255, 71, 87, 0.5);
-  animation: titleFlash 1s ease-in-out infinite;
-}
-
-.trade-alert-modal.green-mode .trade-alert-title {
-  text-shadow: 0 0 20px rgba(46, 213, 115, 0.5);
-}
-
-@keyframes titleFlash {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-/* Section name */
-.trade-alert-section {
-  font-family: var(--font-mono);
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text-secondary);
-  margin-bottom: 20px;
-  letter-spacing: 1px;
-}
-
-/* Color badge */
-.trade-alert-color-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 32px;
-  border-radius: var(--radius-full);
-  font-size: 1.5rem;
-  font-weight: 900;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  margin-bottom: 16px;
-  animation: badgePulse 1.5s ease-in-out infinite;
-}
-
-.trade-alert-color-badge.badge-red {
-  background: linear-gradient(135deg, rgba(255, 71, 87, 0.25), rgba(255, 71, 87, 0.12));
-  color: var(--color-red);
-  border: 2px solid rgba(255, 71, 87, 0.5);
-  box-shadow: 0 0 30px rgba(255, 71, 87, 0.2);
-}
-
-.trade-alert-color-badge.badge-green {
-  background: linear-gradient(135deg, rgba(46, 213, 115, 0.25), rgba(46, 213, 115, 0.12));
-  color: var(--color-green);
-  border: 2px solid rgba(46, 213, 115, 0.5);
-  box-shadow: 0 0 30px rgba(46, 213, 115, 0.2);
-}
-
-@keyframes badgePulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
-}
-
-/* Color dot inside badge */
-.trade-alert-color-dot {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: inline-block;
-  animation: dotGlow 1s ease-in-out infinite alternate;
-}
-
-.trade-alert-color-badge.badge-red .trade-alert-color-dot {
-  background: var(--color-red);
-  box-shadow: 0 0 14px var(--color-red-glow);
-}
-
-.trade-alert-color-badge.badge-green .trade-alert-color-dot {
-  background: var(--color-green);
-  box-shadow: 0 0 14px var(--color-green-glow);
-}
-
-@keyframes dotGlow {
-  from { box-shadow: 0 0 8px currentColor; }
-  to { box-shadow: 0 0 20px currentColor; }
-}
-
-/* Period text */
-.trade-alert-period {
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
-/* Message */
-.trade-alert-message {
-  font-size: 0.95rem;
-  color: var(--text-secondary);
-  margin-bottom: 24px;
-  font-weight: 500;
-}
-
-/* Dismiss button */
-.trade-alert-dismiss {
-  width: 100%;
-  padding: 14px 20px;
-  border: none;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, #38bdf8, #a855f7);
-  color: #fff;
-  font-family: var(--font-primary);
-  font-size: 0.95rem;
-  font-weight: 800;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 20px rgba(56, 189, 248, 0.3);
-}
-
-.trade-alert-dismiss:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 28px rgba(56, 189, 248, 0.4);
-}
-
-.trade-alert-dismiss:active {
-  transform: translateY(0);
-}
-
-/* Sound playing indicator bar at bottom */
-.trade-alert-sound-bar {
-  position: absolute;
-  bottom: 0;
+  top: 0;
   left: 0;
   right: 0;
-  height: 4px;
-  border-radius: 0 0 28px 28px;
-  background: linear-gradient(90deg, var(--color-red), var(--color-amber), var(--color-green), var(--color-cyan));
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--color-red), var(--color-amber), transparent);
   background-size: 200% 100%;
-  animation: soundBarMove 1s linear infinite;
-  opacity: 0.7;
+  animation: bannerGlowMove 2s linear infinite;
 }
 
-.trade-alert-modal.green-mode .trade-alert-sound-bar {
-  background: linear-gradient(90deg, var(--color-green), var(--color-cyan), var(--color-green), var(--color-amber));
+.trade-card-banner.banner-mode-green::before {
+  background: linear-gradient(90deg, transparent, var(--color-green), var(--color-cyan), transparent);
   background-size: 200% 100%;
 }
 
-@keyframes soundBarMove {
-  from { background-position: 0% 0%; }
+@keyframes bannerGlowMove {
+  from { background-position: -200% 0%; }
   to { background-position: 200% 0%; }
 }
 
-/* Mobile adjustments for trade alert */
-@media (max-width: 480px) {
-  .trade-alert-modal {
-    padding: 32px 24px 24px;
-    border-radius: 20px;
-    max-width: 340px;
+@keyframes tradeBannerSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scaleY(0.8);
   }
-
-  .trade-alert-icon {
-    font-size: 2.8rem;
-  }
-
-  .trade-alert-title {
-    font-size: 1.3rem;
-  }
-
-  .trade-alert-color-badge {
-    font-size: 1.2rem;
-    padding: 12px 24px;
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
   }
 }
+
+/* Banner icon */
+.trade-banner-icon {
+  font-size: 1.8rem;
+  animation: tradeBannerIconPulse 1s ease-in-out infinite alternate;
+  flex-shrink: 0;
+}
+
+@keyframes tradeBannerIconPulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.15); }
+}
+
+/* Banner content */
+.trade-banner-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.trade-banner-title {
+  font-family: var(--font-primary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+  animation: tradeTitleFlash 1.5s ease-in-out infinite;
+}
+
+@keyframes tradeTitleFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.trade-banner-color {
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  animation: tradeColorPulse 2s ease-in-out infinite;
+}
+
+.trade-banner-color.banner-red {
+  color: var(--color-red);
+  text-shadow: 0 0 16px rgba(255, 71, 87, 0.4);
+}
+
+.trade-banner-color.banner-green {
+  color: var(--color-green);
+  text-shadow: 0 0 16px rgba(46, 213, 115, 0.4);
+}
+
+@keyframes tradeColorPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+.trade-banner-period {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+/* Signal-triggered card enhancements for green */
+.section-card.signal-triggered.signal-green {
+  border-color: rgba(46, 213, 115, 0.5);
+  box-shadow: 0 0 30px rgba(46, 213, 115, 0.15);
+  animation: cardPulseGreen 2s ease-in-out infinite;
+}
+
+.section-card.signal-triggered.signal-green::before {
+  background: linear-gradient(90deg, var(--color-green), var(--color-cyan));
+  opacity: 1;
+}
+
+@keyframes cardPulseGreen {
+  0%, 100% { box-shadow: 0 0 20px rgba(46, 213, 115, 0.1); }
+  50% { box-shadow: 0 0 40px rgba(46, 213, 115, 0.25); }
+}
+
