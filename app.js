@@ -9,9 +9,9 @@ const CONFIG = {
   API_BASE: '/api',
   FRESH_SIGNAL_STORAGE_KEY: 'wingo-fresh-signal-state',
   SAAS_ID: 1,
-  REFRESH_INTERVAL: 30000,       // 30 seconds
+  REFRESH_INTERVAL: 10000,       // 10 seconds (safety-net background poll)
+  PERIOD_DURATION_MS: 180000,    // 3 minutes = 180 seconds per color period
   PATTERN_LENGTH: 4,             // RGRG or GRGR
-  CONSECUTIVE_LOSSES_FOR_SIGNAL: 2,
   MAX_LOG_ENTRIES: 80,
   MAX_DOTS_DISPLAY: 30,
   SECTIONS: {
@@ -24,9 +24,6 @@ const CONFIG = {
 
 // ============ APPLICATION STATE ============
 const state = {
-  mode: 'WATCHING',        // 'WATCHING' | 'SIGNAL_ACTIVE'
-  activeSection: null,     // Key of the locked section (e.g., 'S')
-  watchCandidates: [],     // Sections with 1+ losses, waiting for the first fresh trade
   sections: {},
   logs: [],
   refreshTimer: null,
@@ -35,7 +32,11 @@ const state = {
   initialized: false,
   lastSignalSoundTime: 0,
   lastNotifiedPeriod: 0,   // Prevents spamming duplicate alerts for the same period
-  tradeReadyCounter: 0
+  nextBoundaryTimer: null,   // setTimeout ID for the next 3-min boundary fetch
+  boundaryFollowUp1: null,   // Follow-up fetch 3s after boundary
+  boundaryFollowUp2: null,   // Follow-up fetch 8s after boundary
+  countdownInterval: null,   // setInterval for live countdown display
+  lastBoundaryFetch: 0       // Timestamp of last boundary-triggered fetch
 };
 
 // Initialize section states
@@ -54,8 +55,6 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     patternDetected: false,
     patternColors: null,
     skipUntilTrendBreaks: false, // After loss: skip remaining trend, wait for new pattern
-    isWatchCandidate: false,
-    tradeReadySequence: 0,
     freshStartArmed: false,
     freshStartAnchorPeriod: 0
   };
@@ -457,47 +456,33 @@ function restoreFreshSignalState() {
   }
 }
 
-function addWatchCandidate(key) {
+/**
+ * Show trade signal immediately when a pattern is detected.
+ * No more waiting for 2 losses — every trade is shown to the user.
+ */
+function showTradeSignal(key) {
   const section = state.sections[key];
-  if (section.isWatchCandidate) return;
+  if (!section.pendingBet) return;
 
-  section.isWatchCandidate = true;
-  section.tradeReadySequence = 0;
-  state.watchCandidates.push(key);
+  const betColor = colorName(section.pendingBet.color);
+  const periodStr = formatPeriod(section.pendingBet.period);
+
+  // Show signal banner at top
+  showSignalBanner(key);
+
+  // Show full-screen trade alert popup with sound
+  showTradeAlert(key);
+
+  // Send push notification
+  sendSystemNotification(
+    `🎯 TRADE: ${section.name}`,
+    `Bet ${betColor} on Period #${periodStr}!`
+  );
 
   addLog(
-    `👀 [${section.name}] ${section.consecutiveLosses} loss registered. Added to watchlist.`,
-    'info'
+    `🚨 [${section.name}] TRADE SIGNAL! Bet ${betColor} on #${periodStr}`,
+    'signal'
   );
-}
-
-function removeWatchCandidate(key) {
-  const section = state.sections[key];
-  if (!section.isWatchCandidate) return;
-
-  section.isWatchCandidate = false;
-  section.tradeReadySequence = 0;
-  state.watchCandidates = state.watchCandidates.filter(candidateKey => candidateKey !== key);
-}
-
-function syncWatchCandidate(key) {
-  const section = state.sections[key];
-
-  if (section.consecutiveLosses >= CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL) {
-    addWatchCandidate(key);
-  } else {
-    removeWatchCandidate(key);
-  }
-}
-
-function markWatchTradeReady(key) {
-  const section = state.sections[key];
-
-  if (state.mode !== 'WATCHING') return;
-  if (!section.isWatchCandidate || !section.pendingBet || section.tradeReadySequence) return;
-
-  state.tradeReadyCounter++;
-  section.tradeReadySequence = state.tradeReadyCounter;
 }
 
 // ============ DATA FETCHING ============
@@ -663,7 +648,6 @@ function processNewData(key, apiData) {
     section.lastKnownPeriod = newPeriods[newPeriods.length - 1].period;
     section.nextPeriod = newNextPeriod;
     scanHistoryForSection(section);
-    syncWatchCandidate(key);
 
     addLog(`${section.emoji} [${section.name}] Loaded ${newPeriods.length} periods | Losses: ${section.consecutiveLosses}`, 'info');
 
@@ -671,7 +655,7 @@ function processNewData(key, apiData) {
     if (section.patternDetected && !section.skipUntilTrendBreaks) {
       const betColor = section.patternColors[section.patternColors.length - 1];
       section.pendingBet = { color: betColor, period: newNextPeriod };
-      markWatchTradeReady(key);
+      showTradeSignal(key);
       addLog(
         `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
         'pattern'
@@ -711,26 +695,22 @@ function processNewData(key, apiData) {
         section.totalWins++;
         section.consecutiveLosses = 0;  // Win resets loss count
         section.skipUntilTrendBreaks = false;
-        section.tradeReadySequence = 0;
         addLog(
           `✅ [${section.name}] WIN! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
           'win'
         );
-        syncWatchCandidate(key);
-        // Handle win in signal flow
-        handleBetOutcome(key, true);
+        hideSignalBanner();
+        playAlertSound();
+        showToast(`✅ ${section.name} WIN!`, 'success');
       } else {
         section.totalLosses++;
         section.consecutiveLosses++;     // Loss counted IMMEDIATELY
         section.skipUntilTrendBreaks = true; // Skip rest of this trend
-        section.tradeReadySequence = 0;
         addLog(
           `❌ [${section.name}] LOSS #${section.consecutiveLosses}! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)}. Skipping trend, waiting for new pattern.`,
           'loss'
         );
-        syncWatchCandidate(key);
-        // Handle loss in signal flow
-        handleBetOutcome(key, false);
+        hideSignalBanner();
       }
 
       section.pendingBet = null;
@@ -754,7 +734,7 @@ function processNewData(key, apiData) {
         // FRESH new pattern → place bet
         const betColor = section.patternColors[section.patternColors.length - 1];
         section.pendingBet = { color: betColor, period: newNextPeriod };
-        markWatchTradeReady(key);
+        showTradeSignal(key);
         addLog(
           `${section.emoji} [${section.name}] New pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
           'pattern'
@@ -773,48 +753,9 @@ function processNewData(key, apiData) {
   }
 }
 
-// ============ SIGNAL FLOW STATE MACHINE ============
-
-function handleBetOutcome(key, won) {
-  const section = state.sections[key];
-
-  if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection === key) {
-    if (won) {
-      // PROFIT! Reset everything
-      addLog(
-        `🎉 [${section.name}] PROFIT! Resetting all sections for fresh monitoring.`,
-        'win'
-      );
-
-      resetAllSections();
-      hideSignalBanner();
-
-      state.mode = 'WATCHING';
-      state.activeSection = null;
-
-      playAlertSound();
-      showToast('✅ Profit achieved! Fresh monitoring started.', 'success');
-      sendSystemNotification(
-        '🎉 PROFIT!',
-        `${section.name} section mein WIN! Sab reset — fresh monitoring shuru.`
-      );
-    } else {
-      // Loss in locked section — STAY LOCKED, wait for next pattern
-      addLog(
-        `⚠️ [${section.name}] Loss in locked section. Staying locked — waiting for next pattern...`,
-        'loss'
-      );
-
-      // Stay on same section, just update the banner
-      updateSignalBanner(key);
-    }
-  }
-}
+// ============ SIMPLIFIED SIGNAL FLOW ============
 
 function resetAllSections() {
-  state.watchCandidates = [];
-  state.tradeReadyCounter = 0;
-
   for (const key of Object.keys(state.sections)) {
     const section = state.sections[key];
     section.consecutiveLosses = 0;
@@ -825,8 +766,6 @@ function resetAllSections() {
     section.totalLosses = 0;
     section.betHistory = [];
     section.skipUntilTrendBreaks = false;
-    section.isWatchCandidate = false;
-    section.tradeReadySequence = 0;
     section.freshStartArmed = false;
     section.freshStartAnchorPeriod = 0;
   }
@@ -835,10 +774,6 @@ function resetAllSections() {
 }
 
 function startFreshSignalsNow() {
-  state.mode = 'WATCHING';
-  state.activeSection = null;
-  state.watchCandidates = [];
-  state.tradeReadyCounter = 0;
   state.lastNotifiedPeriod = 0;
 
   for (const section of Object.values(state.sections)) {
@@ -852,8 +787,6 @@ function startFreshSignalsNow() {
     section.totalWins = 0;
     section.totalLosses = 0;
     section.betHistory = [];
-    section.isWatchCandidate = false;
-    section.tradeReadySequence = 0;
     section.freshStartArmed = ignoreCurrentPattern;
     section.freshStartAnchorPeriod = anchorPeriod;
     section.skipUntilTrendBreaks = ignoreCurrentPattern;
@@ -872,54 +805,6 @@ function startFreshSignalsNow() {
     '🔄 Fresh Signals',
     'Current pattern and lock reset. Now watching fresh signals from this point.'
   );
-}
-
-/**
- * Among all watchlist sections, lock the one whose next valid trade appeared first.
- */
-function lockFirstWatchTradeSection() {
-  let bestKey = null;
-  let earliestTrade = Infinity;
-
-  for (const key of state.watchCandidates) {
-    const section = state.sections[key];
-    if (!section.pendingBet || !section.tradeReadySequence) continue;
-
-    if (section.tradeReadySequence < earliestTrade) {
-      earliestTrade = section.tradeReadySequence;
-      bestKey = key;
-    }
-  }
-
-  if (!bestKey) return;
-
-  const section = state.sections[bestKey];
-
-  state.mode = 'SIGNAL_ACTIVE';
-  state.activeSection = bestKey;
-
-  addLog(
-    `🎯 [${section.name}] LOCKED! First fresh trade among watchlist sections.`,
-    'signal'
-  );
-
-  playAlertSound();
-  showSignalBanner(bestKey);
-  showTradeAlert(bestKey);  // Full-screen popup with premium sound
-
-  const betInfo = section.pendingBet
-    ? `Bet ${colorName(section.pendingBet.color)} on #${formatPeriod(section.pendingBet.period)}`
-    : 'Waiting for pattern...';
-  sendSystemNotification(
-    `🎯 LOCKED: ${section.name}`,
-    `Watchlist winner — ${betInfo}`
-  );
-}
-
-function checkSignalConditions() {
-  if (state.mode === 'WATCHING') {
-    lockFirstWatchTradeSection();
-  }
 }
 
 // ============ UI RENDERING ============
@@ -963,7 +848,7 @@ function renderSection(key) {
   // Stats
   document.getElementById(`wins-${key}`).textContent = `W: ${section.totalWins}`;
   document.getElementById(`losses-${key}`).textContent = `L: ${section.totalLosses}`;
-  document.getElementById(`streak-${key}`).textContent = `Loss: ${section.consecutiveLosses}/${CONFIG.CONSECUTIVE_LOSSES_FOR_SIGNAL}`;
+  document.getElementById(`streak-${key}`).textContent = `Streak: ${section.consecutiveLosses}`;
 
   // Show skip indicator
   if (section.skipUntilTrendBreaks) {
@@ -972,18 +857,12 @@ function renderSection(key) {
 
   // Section status badge
   const statusEl = document.getElementById(`status-${key}`);
-  if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection === key) {
-    statusEl.textContent = '🎯 LOCKED';
+  if (section.pendingBet) {
+    statusEl.textContent = '🎯 TRADE';
     statusEl.className = 'section-status status-signal';
-  } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection !== key) {
-    statusEl.textContent = 'Paused';
-    statusEl.className = 'section-status status-paused';
   } else if (hasFreshSignalState(section)) {
     statusEl.textContent = 'Fresh Reset';
     statusEl.className = 'section-status status-watching';
-  } else if (section.isWatchCandidate) {
-    statusEl.textContent = '1L Watch';
-    statusEl.className = 'section-status status-hunting';
   } else if (section.patternDetected) {
     statusEl.textContent = 'Pattern!';
     statusEl.className = 'section-status status-pattern';
@@ -996,14 +875,8 @@ function renderSection(key) {
   const cardEl = document.getElementById(`card-${key}`);
   cardEl.classList.remove('active', 'signal-triggered', 'paused', 'hunting');
 
-  if (state.mode === 'SIGNAL_ACTIVE') {
-    if (state.activeSection === key) {
-      cardEl.classList.add('signal-triggered');
-    } else {
-      cardEl.classList.add('paused');
-    }
-  } else if (section.isWatchCandidate) {
-    cardEl.classList.add('hunting');
+  if (section.pendingBet) {
+    cardEl.classList.add('signal-triggered');
   } else if (section.patternDetected) {
     cardEl.classList.add('active');
   }
@@ -1116,47 +989,44 @@ function renderStrategyPanel() {
   const appStatus = document.getElementById('app-status');
   const freshResetActive = Object.values(state.sections).some(section => hasFreshSignalState(section));
 
-  if (state.mode === 'WATCHING') {
-    const watchedSections = state.watchCandidates.map(key => state.sections[key].name);
-
-    modeText.textContent = freshResetActive ? 'FRESH WATCH' : 'WATCHING';
-    modeText.className = freshResetActive ? 'value reset-mode' : 'value watching-mode';
-    activeSectionText.textContent = watchedSections.length > 0
-      ? watchedSections.join(', ')
-      : 'All Sections';
-    if (watchedSections.length > 0) {
-      appStatus.textContent = 'WATCHING 1L';
-    } else if (freshResetActive) {
-      appStatus.textContent = 'FRESH START';
-    } else {
-      appStatus.textContent = 'WATCHING ALL';
+  // Find sections with active trades
+  const activeTrades = [];
+  for (const [key, section] of Object.entries(state.sections)) {
+    if (section.pendingBet) {
+      activeTrades.push({ key, section });
     }
-    appStatus.className = 'status-badge watching';
+  }
 
-    if (watchedSections.length > 0) {
-      nextSignalText.textContent = `Waiting for first fresh trade in: ${watchedSections.join(', ')}`;
-    } else if (freshResetActive) {
-      nextSignalText.textContent = 'Fresh reset active. Waiting for current trend to clear and new pattern to form.';
-    } else {
-      nextSignalText.textContent = 'Monitoring...';
-    }
-    nextSignalText.style.color = '';
-
-  } else if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection) {
-    const section = state.sections[state.activeSection];
-    modeText.textContent = '🎯 LOCKED';
+  if (activeTrades.length > 0) {
+    modeText.textContent = '🎯 TRADE ACTIVE';
     modeText.className = 'value signal-mode';
-    activeSectionText.textContent = `${section.emoji} ${section.name} (${section.consecutiveLosses} loss)`;
-    appStatus.textContent = `🎯 ${section.name.toUpperCase()}`;
+    const names = activeTrades.map(t => t.section.name).join(', ');
+    activeSectionText.textContent = names;
+    appStatus.textContent = `🎯 ${activeTrades.length} TRADE${activeTrades.length > 1 ? 'S' : ''}`;
     appStatus.className = 'status-badge signal-active';
 
-    if (section.pendingBet) {
-      nextSignalText.textContent = `Bet ${colorName(section.pendingBet.color)} on #${formatPeriod(section.pendingBet.period)}`;
-      nextSignalText.style.color = section.pendingBet.color === 'G' ? 'var(--color-green)' : 'var(--color-red)';
-    } else {
-      nextSignalText.textContent = 'Waiting for next pattern in locked section...';
-      nextSignalText.style.color = '';
-    }
+    const tradeTexts = activeTrades.map(t => {
+      const betColor = colorName(t.section.pendingBet.color);
+      return `${t.section.name}: ${betColor}`;
+    });
+    nextSignalText.textContent = tradeTexts.join(' | ');
+    nextSignalText.style.color = '';
+  } else if (freshResetActive) {
+    modeText.textContent = 'FRESH WATCH';
+    modeText.className = 'value reset-mode';
+    activeSectionText.textContent = 'All Sections';
+    appStatus.textContent = 'FRESH START';
+    appStatus.className = 'status-badge watching';
+    nextSignalText.textContent = 'Fresh reset active. Waiting for current trend to clear and new pattern to form.';
+    nextSignalText.style.color = '';
+  } else {
+    modeText.textContent = 'WATCHING';
+    modeText.className = 'value watching-mode';
+    activeSectionText.textContent = 'All Sections';
+    appStatus.textContent = 'WATCHING ALL';
+    appStatus.className = 'status-badge watching';
+    nextSignalText.textContent = 'Monitoring all sections for patterns...';
+    nextSignalText.style.color = '';
   }
 }
 
@@ -1182,7 +1052,7 @@ function showSignalBanner(key) {
   const mainText = document.getElementById('signal-main-text');
   const subText = document.getElementById('signal-sub-text');
 
-  mainText.textContent = `🎯 LOCKED ON: ${section.name.toUpperCase()}`;
+  mainText.textContent = `🎯 TRADE: ${section.name.toUpperCase()}`;
 
   if (section.pendingBet) {
     const betColor = colorName(section.pendingBet.color);
@@ -1381,6 +1251,105 @@ function startRefreshProgress() {
   }, 1000);
 }
 
+// ============ SMART 3-MIN BOUNDARY SYNC ============
+
+/**
+ * Calculate milliseconds until the next 3-minute boundary from midnight.
+ * Periods start at 00:00:00 and repeat every 3 minutes:
+ *   00:00, 00:03, 00:06, 00:09, ... 23:57
+ */
+function getMsUntilNextBoundary() {
+  const now = new Date();
+  const midnightMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const elapsedMs = now.getTime() - midnightMs;
+  const periodMs = CONFIG.PERIOD_DURATION_MS; // 180000 (3 min)
+  const currentPeriodStart = Math.floor(elapsedMs / periodMs) * periodMs;
+  const nextBoundary = currentPeriodStart + periodMs;
+  const msUntil = nextBoundary - elapsedMs;
+  return Math.max(msUntil, 50); // minimum 50ms to avoid tight loops
+}
+
+/**
+ * Get remaining seconds until next 3-minute boundary.
+ */
+function getSecondsUntilNextBoundary() {
+  return Math.ceil(getMsUntilNextBoundary() / 1000);
+}
+
+/**
+ * Schedule a precision fetch right at the next 3-minute boundary,
+ * plus follow-up fetches at +3s and +8s (API may be slightly delayed).
+ */
+function scheduleNextBoundaryFetch() {
+  // Clear any existing timers
+  clearTimeout(state.nextBoundaryTimer);
+  clearTimeout(state.boundaryFollowUp1);
+  clearTimeout(state.boundaryFollowUp2);
+
+  const msUntil = getMsUntilNextBoundary();
+
+  state.nextBoundaryTimer = setTimeout(async () => {
+    state.lastBoundaryFetch = Date.now();
+    addLog('⏰ 3-min boundary hit! Fetching new color...', 'info');
+    await refresh();
+
+    // Follow-up fetch at +3 seconds (API might update slightly late)
+    state.boundaryFollowUp1 = setTimeout(async () => {
+      await refresh();
+    }, 3000);
+
+    // Follow-up fetch at +8 seconds (catch slower updates)
+    state.boundaryFollowUp2 = setTimeout(async () => {
+      await refresh();
+    }, 8000);
+
+    // Schedule the NEXT boundary
+    scheduleNextBoundaryFetch();
+  }, msUntil);
+}
+
+/**
+ * Start the live countdown timer that updates every second.
+ */
+function startCountdownTimer() {
+  clearInterval(state.countdownInterval);
+
+  function updateCountdown() {
+    const secondsLeft = getSecondsUntilNextBoundary();
+    const min = Math.floor(secondsLeft / 60);
+    const sec = secondsLeft % 60;
+    const display = `${min}:${String(sec).padStart(2, '0')}`;
+
+    // Update countdown elements
+    const countdownEl = document.getElementById('next-color-countdown');
+    if (countdownEl) {
+      countdownEl.textContent = display;
+
+      // Visual urgency: change color when < 10 seconds
+      if (secondsLeft <= 10) {
+        countdownEl.classList.add('countdown-urgent');
+      } else if (secondsLeft <= 30) {
+        countdownEl.classList.add('countdown-soon');
+        countdownEl.classList.remove('countdown-urgent');
+      } else {
+        countdownEl.classList.remove('countdown-urgent', 'countdown-soon');
+      }
+    }
+
+    // Update the progress bar to match the 3-minute cycle
+    const bar = document.getElementById('refresh-bar');
+    if (bar) {
+      const totalSeconds = CONFIG.PERIOD_DURATION_MS / 1000; // 180
+      const elapsed = totalSeconds - secondsLeft;
+      const pct = (elapsed / totalSeconds) * 100;
+      bar.style.width = `${Math.min(pct, 100)}%`;
+    }
+  }
+
+  updateCountdown(); // run immediately
+  state.countdownInterval = setInterval(updateCountdown, 1000);
+}
+
 // ============ MAIN LOOP ============
 
 async function refresh() {
@@ -1391,16 +1360,7 @@ async function refresh() {
       processNewData(key, data);
     }
 
-    // Check signal conditions after processing all sections
-    checkSignalConditions();
-
-    // If signal is active, update banner
-    if (state.mode === 'SIGNAL_ACTIVE' && state.activeSection) {
-      updateSignalBanner(state.activeSection);
-    }
-
     renderAll();
-    startRefreshProgress();
 
   } catch (err) {
     console.error('Refresh error:', err);
@@ -1425,9 +1385,16 @@ async function initialize() {
     addLog('✅ Dashboard ready! Monitoring all 4 sections.', 'info');
     showToast('Dashboard ready!', 'success');
 
-    // Start auto-refresh
+    // Start smart 3-minute boundary sync (precision fetch at period boundaries)
+    scheduleNextBoundaryFetch();
+
+    // Start live countdown timer (updates every second)
+    startCountdownTimer();
+
+    // Safety-net background poll (catches anything the boundary sync might miss)
     state.refreshTimer = setInterval(refresh, CONFIG.REFRESH_INTERVAL);
-    startRefreshProgress();
+
+    addLog(`⏰ Smart sync started. Next color in ${getSecondsUntilNextBoundary()}s`, 'info');
 
   } catch (err) {
     console.error('Initialization error:', err);
