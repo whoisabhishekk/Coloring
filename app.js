@@ -518,11 +518,11 @@ async function fetchAllSections() {
 // ============ PATTERN DETECTION & STRATEGY ENGINE ============
 
 /**
- * Scan history with IMMEDIATE loss counting + skip-trend logic.
- * Rule: When a pattern bet LOSES → count 1 loss IMMEDIATELY, then skip
- * the rest of the alternating trend. Only bet again on a FRESH new pattern
- * that appears after the trend breaks.
- * A WIN → resets consecutive losses to 0.
+ * Scan history using virtual-tracking for 2 consecutive losses.
+ * A bet is virtual if consecutiveLosses < 2. When consecutiveLosses reaches 2,
+ * the next bet is live (user signal).
+ * Resolving a live bet resets consecutiveLosses to 0 regardless of outcome.
+ * Resolving a virtual bet resets consecutiveLosses on win, increments on loss.
  */
 function scanHistoryForSection(section) {
   const periods = getEligiblePeriodsForSignals(section);
@@ -543,7 +543,41 @@ function scanHistoryForSection(section) {
     return;
   }
 
+  let activeBet = null; // { color, period, isVirtual }
+
   for (let i = CONFIG.PATTERN_LENGTH - 1; i < periods.length - 1; i++) {
+    // Resolve previous active bet
+    if (activeBet && periods[i].period === activeBet.period) {
+      const actualColor = getColor(periods[i]);
+      const won = actualColor === activeBet.color;
+
+      if (!activeBet.isVirtual) {
+        section.betHistory.push({
+          period: periods[i].period,
+          betColor: activeBet.color,
+          actualColor,
+          won
+        });
+
+        if (won) {
+          section.totalWins++;
+        } else {
+          section.totalLosses++;
+        }
+        
+        // Reset streak to 0 after any live bet (win or loss)
+        section.consecutiveLosses = 0;
+      } else {
+        // Virtual bet resolves
+        if (won) {
+          section.consecutiveLosses = 0;
+        } else {
+          section.consecutiveLosses++;
+        }
+      }
+      activeBet = null;
+    }
+
     const patternColors = [];
     for (let j = i - (CONFIG.PATTERN_LENGTH - 1); j <= i; j++) {
       patternColors.push(getColor(periods[j]));
@@ -553,35 +587,46 @@ function scanHistoryForSection(section) {
 
     if (isPattern) {
       if (section.skipUntilTrendBreaks) {
-        // Still in the same alternating trend after a loss → skip, don't bet
         continue;
       }
 
-      // Fresh pattern → place bet (same as last color of pattern)
       const betColor = patternColors[patternColors.length - 1];
-      const actualColor = getColor(periods[i + 1]);
-      const won = actualColor === betColor;
+      const nextPeriod = periods[i + 1].period;
+      const isVirtual = section.consecutiveLosses < 2;
 
+      activeBet = { color: betColor, period: nextPeriod, isVirtual };
+    } else {
+      section.skipUntilTrendBreaks = false;
+    }
+  }
+
+  // Resolve the last period if a bet was active
+  if (activeBet && periods[periods.length - 1].period === activeBet.period) {
+    const actualColor = getColor(periods[periods.length - 1]);
+    const won = actualColor === activeBet.color;
+
+    if (!activeBet.isVirtual) {
       section.betHistory.push({
-        period: periods[i + 1].period,
-        betColor,
+        period: periods[periods.length - 1].period,
+        betColor: activeBet.color,
         actualColor,
         won
       });
 
       if (won) {
         section.totalWins++;
-        section.consecutiveLosses = 0; // Win resets everything
-        section.skipUntilTrendBreaks = false;
       } else {
         section.totalLosses++;
-        section.consecutiveLosses++;   // Loss counted IMMEDIATELY
-        section.skipUntilTrendBreaks = true; // Skip rest of this trend
       }
+      section.consecutiveLosses = 0;
     } else {
-      // Pattern broken → trend ended, ready for new patterns
-      section.skipUntilTrendBreaks = false;
+      if (won) {
+        section.consecutiveLosses = 0;
+      } else {
+        section.consecutiveLosses++;
+      }
     }
+    activeBet = null;
   }
 
   // Check for current pattern (latest 4 colors)
@@ -654,12 +699,21 @@ function processNewData(key, apiData) {
     // Set pending bet if pattern detected and not skipping
     if (section.patternDetected && !section.skipUntilTrendBreaks) {
       const betColor = section.patternColors[section.patternColors.length - 1];
-      section.pendingBet = { color: betColor, period: newNextPeriod };
-      showTradeSignal(key);
-      addLog(
-        `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
-        'pattern'
-      );
+      const isVirtual = section.consecutiveLosses < 2;
+      section.pendingBet = { color: betColor, period: newNextPeriod, isVirtual };
+      
+      if (!isVirtual) {
+        showTradeSignal(key);
+        addLog(
+          `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
+          'pattern'
+        );
+      } else {
+        addLog(
+          `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Virtual Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)} (Losses: ${section.consecutiveLosses}/2)`,
+          'info'
+        );
+      }
     } else if (section.skipUntilTrendBreaks) {
       addLog(`${section.emoji} [${section.name}] Skipping current trend (lost already), waiting for trend to break`, 'info');
     }
@@ -684,33 +738,50 @@ function processNewData(key, apiData) {
       const actualColor = getColor(period);
       const won = actualColor === section.pendingBet.color;
 
-      section.betHistory.push({
-        period: period.period,
-        betColor: section.pendingBet.color,
-        actualColor,
-        won
-      });
+      if (!section.pendingBet.isVirtual) {
+        // Resolve LIVE bet
+        section.betHistory.push({
+          period: period.period,
+          betColor: section.pendingBet.color,
+          actualColor,
+          won
+        });
 
-      if (won) {
-        section.totalWins++;
-        section.consecutiveLosses = 0;  // Win resets loss count
-        section.skipUntilTrendBreaks = false;
-        addLog(
-          `✅ [${section.name}] WIN! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
-          'win'
-        );
-        hideSignalBanner();
-        playAlertSound();
-        showToast(`✅ ${section.name} WIN!`, 'success');
+        if (won) {
+          section.totalWins++;
+          addLog(
+            `✅ [${section.name}] WIN! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
+            'win'
+          );
+          hideSignalBanner();
+          playAlertSound();
+          showToast(`✅ ${section.name} WIN!`, 'success');
+        } else {
+          section.totalLosses++;
+          addLog(
+            `❌ [${section.name}] LOSS! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)}.`,
+            'loss'
+          );
+          hideSignalBanner();
+        }
+
+        // Reset streak to 0 after any live bet (win or loss)
+        section.consecutiveLosses = 0;
       } else {
-        section.totalLosses++;
-        section.consecutiveLosses++;     // Loss counted IMMEDIATELY
-        section.skipUntilTrendBreaks = true; // Skip rest of this trend
-        addLog(
-          `❌ [${section.name}] LOSS #${section.consecutiveLosses}! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)}. Skipping trend, waiting for new pattern.`,
-          'loss'
-        );
-        hideSignalBanner();
+        // Resolve VIRTUAL bet
+        if (won) {
+          section.consecutiveLosses = 0;
+          addLog(
+            `ℹ️ [${section.name}] Virtual Bet WIN! Resetting consecutive losses.`,
+            'info'
+          );
+        } else {
+          section.consecutiveLosses++;
+          addLog(
+            `ℹ️ [${section.name}] Virtual Bet LOSS! Consecutive losses: ${section.consecutiveLosses}/2.`,
+            'info'
+          );
+        }
       }
 
       section.pendingBet = null;
@@ -733,12 +804,21 @@ function processNewData(key, apiData) {
       } else {
         // FRESH new pattern → place bet
         const betColor = section.patternColors[section.patternColors.length - 1];
-        section.pendingBet = { color: betColor, period: newNextPeriod };
-        showTradeSignal(key);
-        addLog(
-          `${section.emoji} [${section.name}] New pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
-          'pattern'
-        );
+        const isVirtual = section.consecutiveLosses < 2;
+        section.pendingBet = { color: betColor, period: newNextPeriod, isVirtual };
+        
+        if (!isVirtual) {
+          showTradeSignal(key);
+          addLog(
+            `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
+            'pattern'
+          );
+        } else {
+          addLog(
+            `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Virtual Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)} (Losses: ${section.consecutiveLosses}/2)`,
+            'info'
+          );
+        }
       }
     } else {
       // Pattern NOT found → trend is broken, ready for new patterns
@@ -836,7 +916,7 @@ function renderSection(key) {
 
   // Bet info
   const betEl = document.getElementById(`bet-${key}`);
-  if (section.pendingBet) {
+  if (section.pendingBet && !section.pendingBet.isVirtual) {
     const colorLabel = colorName(section.pendingBet.color);
     betEl.textContent = `Bet: ${colorLabel}`;
     betEl.className = `bet-info bet-${colorLabel.toLowerCase()}`;
@@ -848,7 +928,7 @@ function renderSection(key) {
   // Stats
   document.getElementById(`wins-${key}`).textContent = `W: ${section.totalWins}`;
   document.getElementById(`losses-${key}`).textContent = `L: ${section.totalLosses}`;
-  document.getElementById(`streak-${key}`).textContent = `Streak: ${section.consecutiveLosses}`;
+  document.getElementById(`streak-${key}`).textContent = `Loss: ${section.consecutiveLosses}/2`;
 
   // Show skip indicator
   if (section.skipUntilTrendBreaks) {
@@ -857,7 +937,7 @@ function renderSection(key) {
 
   // Section status badge
   const statusEl = document.getElementById(`status-${key}`);
-  if (section.pendingBet) {
+  if (section.pendingBet && !section.pendingBet.isVirtual) {
     statusEl.textContent = '🎯 TRADE';
     statusEl.className = 'section-status status-signal';
   } else if (hasFreshSignalState(section)) {
@@ -875,7 +955,7 @@ function renderSection(key) {
   const cardEl = document.getElementById(`card-${key}`);
   cardEl.classList.remove('active', 'signal-triggered', 'signal-green', 'signal-red', 'paused', 'hunting');
 
-  if (section.pendingBet) {
+  if (section.pendingBet && !section.pendingBet.isVirtual) {
     cardEl.classList.add('signal-triggered');
     cardEl.classList.add(section.pendingBet.color === 'G' ? 'signal-green' : 'signal-red');
   } else if (section.patternDetected) {
@@ -996,7 +1076,7 @@ function renderStrategyPanel() {
   // Find sections with active trades
   const activeTrades = [];
   for (const [key, section] of Object.entries(state.sections)) {
-    if (section.pendingBet) {
+    if (section.pendingBet && !section.pendingBet.isVirtual) {
       activeTrades.push({ key, section });
     }
   }
@@ -1058,7 +1138,7 @@ function showSignalBanner(key) {
 
   mainText.textContent = `🎯 TRADE: ${section.name.toUpperCase()}`;
 
-  if (section.pendingBet) {
+  if (section.pendingBet && !section.pendingBet.isVirtual) {
     const betColor = colorName(section.pendingBet.color);
     const periodStr = formatPeriod(section.pendingBet.period);
     subText.textContent = `Next Bet: ${betColor} on Period #${periodStr}`;
@@ -1096,7 +1176,7 @@ function updateSignalBanner(key) {
   const section = state.sections[key];
   const subText = document.getElementById('signal-sub-text');
 
-  if (section.pendingBet) {
+  if (section.pendingBet && !section.pendingBet.isVirtual) {
     const betColor = colorName(section.pendingBet.color);
     const periodStr = formatPeriod(section.pendingBet.period);
     subText.textContent = `Next Bet: ${betColor} on Period #${periodStr}`;
@@ -1114,7 +1194,7 @@ function updateSignalBanner(key) {
       );
     }
   } else {
-    subText.textContent = `Losses: ${section.consecutiveLosses} — Waiting for next pattern...`;
+    subText.textContent = `Losses: ${section.consecutiveLosses}/2 — Waiting for next pattern...`;
   }
 }
 
@@ -1134,7 +1214,7 @@ function renderTradeBanner(key) {
   const colorEl = document.getElementById(`trade-banner-color-${key}`);
   const periodEl = document.getElementById(`trade-banner-period-${key}`);
 
-  if (section.pendingBet) {
+  if (section.pendingBet && !section.pendingBet.isVirtual) {
     const betColor = section.pendingBet.color;
     const betColorLabel = colorName(betColor);
     const periodStr = formatPeriod(section.pendingBet.period);
