@@ -57,7 +57,8 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     skipUntilTrendBreaks: false, // After loss: skip remaining trend, wait for new pattern
     freshStartArmed: false,
     freshStartAnchorPeriod: 0,
-    strategyState: 'HUNTING'   // 'HUNTING', 'WAITING_FOR_FIRST_LOSS', 'SIGNAL_ACTIVE', 'WAITING_FOR_TREND_BREAK'
+    strategyState: 'HUNTING',   // 'HUNTING', 'WAITING_FOR_FIRST_LOSS', 'SIGNAL_ACTIVE', 'WAITING_FOR_TREND_BREAK'
+    lastNotifiedPeriod: 0
   };
 }
 
@@ -1169,8 +1170,8 @@ function showSignalBanner(key) {
     
     // Notification logic
     const period = section.pendingBet.period;
-    if (state.lastNotifiedPeriod !== period) {
-      state.lastNotifiedPeriod = period;
+    if (section.lastNotifiedPeriod !== period) {
+      section.lastNotifiedPeriod = period;
       sendSystemNotification(
         `🎯 Wingo: LOCKED ${section.name}`,
         `Bet ${betColor} on Period #${periodStr}!`
@@ -1182,8 +1183,8 @@ function showSignalBanner(key) {
     
     // Notification logic
     const uniqueKey = section.lastKnownPeriod + "_locked";
-    if (state.lastNotifiedPeriod !== uniqueKey) {
-      state.lastNotifiedPeriod = uniqueKey;
+    if (section.lastNotifiedPeriod !== uniqueKey) {
+      section.lastNotifiedPeriod = uniqueKey;
       sendSystemNotification(
         `🎯 Wingo: ${section.name} Locked`,
         `Locked on ${section.name}, waiting for pattern...`
@@ -1208,8 +1209,8 @@ function updateSignalBanner(key) {
     
     // Notification logic
     const period = section.pendingBet.period;
-    if (state.lastNotifiedPeriod !== period) {
-      state.lastNotifiedPeriod = period;
+    if (section.lastNotifiedPeriod !== period) {
+      section.lastNotifiedPeriod = period;
       playTradeReadySound();  // Play sound for new bet signal
       sendSystemNotification(
         `🚨 Wingo: ${section.name} Bet`,
@@ -1222,6 +1223,16 @@ function updateSignalBanner(key) {
 }
 
 function hideSignalBanner() {
+  // Check if any other section still has an active live bet
+  const activeSectionKey = Object.keys(state.sections).find(
+    key => state.sections[key].pendingBet && !state.sections[key].pendingBet.isVirtual
+  );
+
+  if (activeSectionKey) {
+    showSignalBanner(activeSectionKey);
+    return;
+  }
+
   const banner = document.getElementById('signal-banner');
   banner.classList.add('hidden');
   document.getElementById('app-header').style.paddingTop = '';
