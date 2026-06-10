@@ -56,7 +56,8 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     patternColors: null,
     skipUntilTrendBreaks: false, // After loss: skip remaining trend, wait for new pattern
     freshStartArmed: false,
-    freshStartAnchorPeriod: 0
+    freshStartAnchorPeriod: 0,
+    strategyMode: 'SAME_COLOR'   // 'SAME_COLOR' or 'ALTERNATE_COLOR'
   };
 }
 
@@ -518,11 +519,13 @@ async function fetchAllSections() {
 // ============ PATTERN DETECTION & STRATEGY ENGINE ============
 
 /**
- * Scan history with IMMEDIATE loss counting + skip-trend logic.
- * Rule: When a pattern bet LOSES → count 1 loss IMMEDIATELY, then skip
- * the rest of the alternating trend. Only bet again on a FRESH new pattern
- * that appears after the trend breaks.
- * A WIN → resets consecutive losses to 0.
+ * Scan history with state machine: SAME_COLOR (first strategy) and ALTERNATE_COLOR (second strategy).
+ * Rule:
+ * 1. Default is SAME_COLOR: bet same as the last color of the pattern.
+ * 2. If it loses (trend continues), switch to ALTERNATE_COLOR mode.
+ * 3. In ALTERNATE_COLOR mode, bet on the alternate color of the last color.
+ * 4. If ALTERNATE_COLOR bet loses (trend breaks), switch back to SAME_COLOR mode.
+ * A WIN keeps the current mode.
  */
 function scanHistoryForSection(section) {
   const periods = getEligiblePeriodsForSignals(section);
@@ -533,6 +536,7 @@ function scanHistoryForSection(section) {
   section.totalLosses = 0;
   section.betHistory = [];
   section.skipUntilTrendBreaks = false;
+  section.strategyMode = 'SAME_COLOR';
 
   if (section.freshStartArmed) {
     section.skipUntilTrendBreaks = true;
@@ -553,12 +557,19 @@ function scanHistoryForSection(section) {
 
     if (isPattern) {
       if (section.skipUntilTrendBreaks) {
-        // Still in the same alternating trend after a loss → skip, don't bet
+        // Fresh-start armed: skip until trend breaks
         continue;
       }
 
-      // Fresh pattern → place bet
-      const betColor = patternColors[patternColors.length - 1];
+      // Determine bet color based on strategy mode
+      let betColor;
+      if (section.strategyMode === 'SAME_COLOR') {
+        betColor = patternColors[patternColors.length - 1]; // Last color
+      } else {
+        const lastColor = patternColors[patternColors.length - 1];
+        betColor = lastColor === 'G' ? 'R' : 'G'; // Alternate color
+      }
+
       const actualColor = getColor(periods[i + 1]);
       const won = actualColor === betColor;
 
@@ -571,16 +582,23 @@ function scanHistoryForSection(section) {
 
       if (won) {
         section.totalWins++;
-        section.consecutiveLosses = 0; // Win resets everything
-        section.skipUntilTrendBreaks = false;
+        section.consecutiveLosses = 0; // Win resets losses
       } else {
         section.totalLosses++;
         section.consecutiveLosses++;   // Loss counted IMMEDIATELY
-        section.skipUntilTrendBreaks = true; // Skip rest of this trend
+        
+        // Switch mode on loss
+        if (section.strategyMode === 'SAME_COLOR') {
+          section.strategyMode = 'ALTERNATE_COLOR';
+        } else {
+          section.strategyMode = 'SAME_COLOR';
+        }
       }
     } else {
-      // Pattern broken → trend ended, ready for new patterns
+      // Pattern broken → trend ended, reset mode and losses
       section.skipUntilTrendBreaks = false;
+      section.consecutiveLosses = 0;
+      section.strategyMode = 'SAME_COLOR';
     }
   }
 
@@ -649,19 +667,25 @@ function processNewData(key, apiData) {
     section.nextPeriod = newNextPeriod;
     scanHistoryForSection(section);
 
-    addLog(`${section.emoji} [${section.name}] Loaded ${newPeriods.length} periods | Losses: ${section.consecutiveLosses}`, 'info');
+    addLog(`${section.emoji} [${section.name}] Loaded ${newPeriods.length} periods | Losses: ${section.consecutiveLosses} | Mode: ${section.strategyMode}`, 'info');
 
-    // Set pending bet if pattern detected and not skipping
+    // Set pending bet if pattern detected and not skipping (fresh-start only)
     if (section.patternDetected && !section.skipUntilTrendBreaks) {
-      const betColor = section.patternColors[section.patternColors.length - 1];
+      let betColor;
+      if (section.strategyMode === 'SAME_COLOR') {
+        betColor = section.patternColors[section.patternColors.length - 1];
+      } else {
+        const lastColor = section.patternColors[section.patternColors.length - 1];
+        betColor = lastColor === 'G' ? 'R' : 'G';
+      }
       section.pendingBet = { color: betColor, period: newNextPeriod };
       showTradeSignal(key);
       addLog(
-        `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
+        `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} (${section.strategyMode}) → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
         'pattern'
       );
     } else if (section.skipUntilTrendBreaks) {
-      addLog(`${section.emoji} [${section.name}] Skipping current trend (lost already), waiting for trend to break`, 'info');
+      addLog(`${section.emoji} [${section.name}] Fresh-start: waiting for current trend to break`, 'info');
     }
 
     return;
@@ -696,7 +720,7 @@ function processNewData(key, apiData) {
         section.consecutiveLosses = 0;  // Win resets loss count
         section.skipUntilTrendBreaks = false;
         addLog(
-          `✅ [${section.name}] WIN! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
+          `✅ [${section.name}] WIN! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)}) | Mode remains ${section.strategyMode}`,
           'win'
         );
         hideSignalBanner();
@@ -705,9 +729,17 @@ function processNewData(key, apiData) {
       } else {
         section.totalLosses++;
         section.consecutiveLosses++;     // Loss counted IMMEDIATELY
-        section.skipUntilTrendBreaks = true; // Skip rest of this trend
+        
+        // Toggle strategy mode on loss
+        const oldMode = section.strategyMode;
+        if (section.strategyMode === 'SAME_COLOR') {
+          section.strategyMode = 'ALTERNATE_COLOR';
+        } else {
+          section.strategyMode = 'SAME_COLOR';
+        }
+        
         addLog(
-          `❌ [${section.name}] LOSS #${section.consecutiveLosses}! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)}. Skipping trend, waiting for new pattern.`,
+          `❌ [${section.name}] LOSS #${section.consecutiveLosses}! Bet ${colorName(section.pendingBet.color)}, Got ${colorName(actualColor)}. Mode changed from ${oldMode} to ${section.strategyMode}.`,
           'loss'
         );
         hideSignalBanner();
@@ -728,26 +760,40 @@ function processNewData(key, apiData) {
 
     if (section.patternDetected) {
       if (section.skipUntilTrendBreaks) {
-        // Still in the same alternating trend after a loss → skip, don't bet
-        // Just wait for trend to break
+        // Fresh-start mode: skip until trend breaks
       } else {
-        // FRESH new pattern → place bet
-        const betColor = section.patternColors[section.patternColors.length - 1];
+        // Determine betColor based on strategyMode
+        let betColor;
+        if (section.strategyMode === 'SAME_COLOR') {
+          betColor = section.patternColors[section.patternColors.length - 1]; // Last color of pattern
+        } else {
+          const lastColor = section.patternColors[section.patternColors.length - 1];
+          betColor = lastColor === 'G' ? 'R' : 'G'; // Alternate color
+        }
         section.pendingBet = { color: betColor, period: newNextPeriod };
         showTradeSignal(key);
         addLog(
-          `${section.emoji} [${section.name}] New pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
+          `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} (${section.strategyMode}) → Bet ${colorName(betColor)} on #${formatPeriod(newNextPeriod)}`,
           'pattern'
         );
       }
     } else {
-      // Pattern NOT found → trend is broken, ready for new patterns
+      // Pattern NOT found → trend is broken
       if (section.skipUntilTrendBreaks) {
         addLog(
           `🔄 [${section.name}] Trend broken. Ready for new pattern.`,
           'info'
         );
         section.skipUntilTrendBreaks = false;
+      }
+      // Reset mode and consecutive losses when trend breaks
+      section.strategyMode = 'SAME_COLOR';
+      if (section.consecutiveLosses > 0) {
+        addLog(
+          `🔄 [${section.name}] Trend ended. Mode reset to SAME_COLOR, loss streak reset from ${section.consecutiveLosses}.`,
+          'info'
+        );
+        section.consecutiveLosses = 0;
       }
     }
   }
@@ -768,6 +814,7 @@ function resetAllSections() {
     section.skipUntilTrendBreaks = false;
     section.freshStartArmed = false;
     section.freshStartAnchorPeriod = 0;
+    section.strategyMode = 'SAME_COLOR';
   }
 
   persistFreshSignalState();
@@ -790,6 +837,7 @@ function startFreshSignalsNow() {
     section.freshStartArmed = ignoreCurrentPattern;
     section.freshStartAnchorPeriod = anchorPeriod;
     section.skipUntilTrendBreaks = ignoreCurrentPattern;
+    section.strategyMode = 'SAME_COLOR';
   }
 
   hideSignalBanner();
@@ -858,7 +906,7 @@ function renderSection(key) {
   // Section status badge
   const statusEl = document.getElementById(`status-${key}`);
   if (section.pendingBet) {
-    statusEl.textContent = '🎯 TRADE';
+    statusEl.textContent = section.strategyMode === 'SAME_COLOR' ? '🎯 SAME' : '🎯 ALT';
     statusEl.className = 'section-status status-signal';
   } else if (hasFreshSignalState(section)) {
     statusEl.textContent = 'Fresh Reset';
