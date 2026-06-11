@@ -11,7 +11,7 @@ const CONFIG = {
   SAAS_ID: 1,
   REFRESH_INTERVAL: 10000,       // 10 seconds (safety-net background poll)
   PERIOD_DURATION_MS: 180000,    // 3 minutes = 180 seconds per color period
-  PATTERN_LENGTH: 4,             // RGRG or GRGR
+  PATTERN_LENGTH: 3,             // RGR or GRG
   MAX_LOG_ENTRIES: 80,
   MAX_DOTS_DISPLAY: 30,
   SECTIONS: {
@@ -48,17 +48,14 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     lastKnownPeriod: 0,
     nextPeriod: 0,
     pendingBet: null,          // { color: 'R'|'G', period: number }
-    consecutiveLosses: 0,      // 1 means the required virtual loss is complete
     totalWins: 0,
     totalLosses: 0,
     betHistory: [],            // [{ period, betColor, actualColor, won }]
     patternDetected: false,
     patternColors: null,
-    waitingForSignalPattern: false, // After 1 virtual loss + break, next pattern gets live signal
-    skipUntilTrendBreaks: false, // After loss: skip remaining trend, wait for new pattern
     freshStartArmed: false,
     freshStartAnchorPeriod: 0,
-    strategyState: 'HUNTING',   // 'HUNTING', 'WAITING_FOR_FIRST_LOSS', 'SIGNAL_ACTIVE', 'WAITING_FOR_TREND_BREAK'
+    strategyState: 'HUNTING',   // 'HUNTING' | 'SIGNAL_ACTIVE'
     lastNotifiedPeriod: 0
   };
 }
@@ -468,9 +465,6 @@ function restoreFreshSignalState() {
 
       section.freshStartAnchorPeriod = Number(saved.freshStartAnchorPeriod) || 0;
       section.freshStartArmed = Boolean(saved.freshStartArmed);
-      if (section.freshStartArmed) {
-        section.strategyState = 'WAITING_FOR_TREND_BREAK';
-      }
     }
   } catch (e) {
     removeStorage(CONFIG.FRESH_SIGNAL_STORAGE_KEY);
@@ -478,8 +472,7 @@ function restoreFreshSignalState() {
 }
 
 /**
- * Show a live trade only after the strategy has completed:
- * 1 virtual loss -> alternate break -> next alternating pattern.
+ * Show a live trade signal — direct bet on pattern's last same color.
  */
 function showTradeSignal(key) {
   const section = state.sections[key];
@@ -515,28 +508,15 @@ function armBetFromCurrentPattern(key, nextPeriod) {
 
   const betColor = section.patternColors[section.patternColors.length - 1];
 
-  if (section.waitingForSignalPattern) {
-    section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: false };
-    section.strategyState = 'SIGNAL_ACTIVE';
-    section.waitingForSignalPattern = false;
-    section.consecutiveLosses = 0;
-    section.skipUntilTrendBreaks = false;
+  // Direct LIVE bet — no virtual, no loss wait
+  section.pendingBet = { color: betColor, period: nextPeriod };
+  section.strategyState = 'SIGNAL_ACTIVE';
 
-    showTradeSignal(key);
-    addLog(
-      `${section.emoji} [${section.name}] 1 loss + break done. Pattern ${section.patternColors.join('')} -> LIVE Bet ${colorName(betColor)} on #${formatPeriod(nextPeriod)}`,
-      'pattern'
-    );
-  } else {
-    section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: true };
-    section.strategyState = 'WAITING_FOR_FIRST_LOSS';
-    section.consecutiveLosses = 0;
-
-    addLog(
-      `${section.emoji} [${section.name}] Pattern detected -> waiting 1 loss with virtual ${colorName(betColor)} on #${formatPeriod(nextPeriod)}`,
-      'info'
-    );
-  }
+  showTradeSignal(key);
+  addLog(
+    `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('')} → LIVE Bet ${colorName(betColor)} on #${formatPeriod(nextPeriod)}`,
+    'pattern'
+  );
 
   return true;
 }
@@ -574,91 +554,60 @@ async function fetchAllSections() {
 // ============ PATTERN DETECTION & STRATEGY ENGINE ============
 
 /**
- * 🎰 SIMPLE STRATEGY ENGINE:
- * 1. Wait for 1 virtual loss (bet same color on a new pattern).
- * 2. Once it loses (trend continues), wait for this alternating trend to BREAK (2 same colors).
- * 3. Once trend breaks, hunt for the NEXT new pattern to appear.
- * 4. When next pattern appears, trigger LIVE signal on the same color.
- * 5. After live bet resolves (win or loss), repeat step 1 again.
+ * 🎰 RGR DIRECT STRATEGY:
+ * 1. Detect alternating pattern (RGR / GRG — 3 length).
+ * 2. Directly bet LIVE on last same color.
+ * 3. After result (win/loss), hunt for next pattern.
+ * No virtual bets, no loss waiting, no trend break waiting.
  */
 
 /**
- * Scan history using the pattern state machine.
- * States:
- * - HUNTING: Waiting for a new RGRG/GRGR pattern.
- * - WAITING_FOR_FIRST_LOSS: Virtual same-color bet is active. Loss qualifies the next signal cycle.
- * - WAITING_FOR_TREND_BREAK: After virtual loss, wait for 2 same colors before the next pattern.
- * - SIGNAL_ACTIVE: Live trade signal is active. After resolution, repeat from step 1.
+ * Scan history — replay past periods to build bet history stats.
+ * States: HUNTING → SIGNAL_ACTIVE → HUNTING (repeat)
  */
 function scanHistoryForSection(section) {
   const periods = getEligiblePeriodsForSignals(section);
 
   // Reset tracking for fresh scan
-  section.consecutiveLosses = 0;
   section.totalWins = 0;
   section.totalLosses = 0;
   section.betHistory = [];
   section.pendingBet = null;
-  section.waitingForSignalPattern = false;
-  section.skipUntilTrendBreaks = section.freshStartArmed;
-  section.strategyState = section.freshStartArmed ? 'WAITING_FOR_TREND_BREAK' : 'HUNTING';
+  section.strategyState = 'HUNTING';
 
   if (periods.length === 0) {
     checkCurrentPattern(section);
     return;
   }
 
-  let activeBet = null; // { color, period, isVirtual }
+  let activeBet = null; // { color, period }
 
   for (let i = 0; i < periods.length; i++) {
+    // Resolve active bet
     if (activeBet && periods[i].period === activeBet.period) {
       const actualColor = getColor(periods[i]);
       const won = actualColor === activeBet.color;
 
-      if (activeBet.isVirtual) {
-        if (won) {
-          section.strategyState = 'HUNTING';
-          section.consecutiveLosses = 0;
-          section.waitingForSignalPattern = false;
-          section.skipUntilTrendBreaks = false;
-        } else {
-          section.consecutiveLosses = 1;
-          section.waitingForSignalPattern = true;
-          section.skipUntilTrendBreaks = true;
-          section.strategyState = 'WAITING_FOR_TREND_BREAK';
-        }
-      } else {
-        section.betHistory.push({
-          period: periods[i].period,
-          betColor: activeBet.color,
-          actualColor,
-          won
-        });
+      section.betHistory.push({
+        period: periods[i].period,
+        betColor: activeBet.color,
+        actualColor,
+        won
+      });
 
-        if (won) {
-          section.totalWins++;
-        } else {
-          section.totalLosses++;
-        }
-        section.consecutiveLosses = 0;
-        section.waitingForSignalPattern = false;
-        section.skipUntilTrendBreaks = false;
-        section.strategyState = 'HUNTING';
+      if (won) {
+        section.totalWins++;
+      } else {
+        section.totalLosses++;
       }
 
+      section.strategyState = 'HUNTING';
       activeBet = null;
     }
 
     if (activeBet) continue;
 
-    if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
-      if (i > 0 && getColor(periods[i - 1]) === getColor(periods[i])) {
-        section.strategyState = 'HUNTING';
-        section.skipUntilTrendBreaks = false;
-      }
-    }
-
-    if (section.strategyState !== 'HUNTING') continue;
+    // Hunt for pattern
     if (i < CONFIG.PATTERN_LENGTH - 1) continue;
 
     const patternColors = periods
@@ -671,52 +620,11 @@ function scanHistoryForSection(section) {
     const betColor = patternColors[patternColors.length - 1];
     const nextPeriod = periods[i + 1].period;
 
-    if (section.waitingForSignalPattern) {
-      activeBet = { color: betColor, period: nextPeriod, isVirtual: false };
-      section.strategyState = 'SIGNAL_ACTIVE';
-    } else {
-      activeBet = { color: betColor, period: nextPeriod, isVirtual: true };
-      section.strategyState = 'WAITING_FOR_FIRST_LOSS';
-    }
+    activeBet = { color: betColor, period: nextPeriod };
+    section.strategyState = 'SIGNAL_ACTIVE';
   }
 
-  if (activeBet && periods[periods.length - 1].period === activeBet.period) {
-    const actualColor = getColor(periods[periods.length - 1]);
-    const won = actualColor === activeBet.color;
-
-    if (activeBet.isVirtual) {
-      if (won) {
-        section.strategyState = 'HUNTING';
-        section.consecutiveLosses = 0;
-        section.waitingForSignalPattern = false;
-        section.skipUntilTrendBreaks = false;
-      } else {
-        section.consecutiveLosses = 1;
-        section.waitingForSignalPattern = true;
-        section.skipUntilTrendBreaks = true;
-        section.strategyState = 'WAITING_FOR_TREND_BREAK';
-      }
-    } else {
-      section.betHistory.push({
-        period: periods[periods.length - 1].period,
-        betColor: activeBet.color,
-        actualColor,
-        won
-      });
-
-      if (won) {
-        section.totalWins++;
-      } else {
-        section.totalLosses++;
-      }
-      section.consecutiveLosses = 0;
-      section.waitingForSignalPattern = false;
-      section.skipUntilTrendBreaks = false;
-      section.strategyState = 'HUNTING';
-    }
-  }
-
-  // Check for current pattern (latest 4 colors)
+  // Check for current pattern (latest colors)
   checkCurrentPattern(section);
 }
 
@@ -755,7 +663,7 @@ function checkCurrentPattern(section) {
 
   const colors = getLatestAlternatingColors(periods);
 
-  if (colors && section.strategyState !== 'WAITING_FOR_TREND_BREAK') {
+  if (colors) {
     section.patternDetected = true;
     section.patternColors = colors;
   } else {
@@ -780,7 +688,7 @@ function processNewData(key, apiData) {
     section.nextPeriod = newNextPeriod;
     scanHistoryForSection(section);
 
-    addLog(`${section.emoji} [${section.name}] Loaded ${newPeriods.length} periods | State: ${section.strategyState} | Losses: ${section.consecutiveLosses}`, 'info');
+    addLog(`${section.emoji} [${section.name}] Loaded ${newPeriods.length} periods | State: ${section.strategyState}`, 'info');
 
     armBetFromCurrentPattern(key, newNextPeriod);
 
@@ -807,58 +715,33 @@ function processNewData(key, apiData) {
       const actualColor = getColor(period);
       const won = actualColor === resolvedBet.color;
 
-      if (resolvedBet.isVirtual) {
-        if (won) {
-          section.strategyState = 'HUNTING';
-          section.consecutiveLosses = 0;
-          section.waitingForSignalPattern = false;
-          section.skipUntilTrendBreaks = false;
-          addLog(
-            `[${section.name}] Virtual WIN. 1 loss nahi mila, step 1 repeat.`,
-            'info'
-          );
-        } else {
-          section.strategyState = 'WAITING_FOR_TREND_BREAK';
-          section.consecutiveLosses = 1;
-          section.waitingForSignalPattern = true;
-          section.skipUntilTrendBreaks = true;
-          addLog(
-            `[${section.name}] 1 virtual LOSS done. Ab alternate break ka wait, phir next pattern par LIVE signal.`,
-            'info'
-          );
-        }
+      // Resolve LIVE bet
+      section.betHistory.push({
+        period: period.period,
+        betColor: resolvedBet.color,
+        actualColor,
+        won
+      });
+
+      if (won) {
+        section.totalWins++;
+        addLog(
+          `✅ [${section.name}] WIN! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
+          'win'
+        );
+        hideSignalBanner();
+        playAlertSound();
+        showToast(`✅ ${section.name} WIN!`, 'success');
       } else {
-        // Resolve LIVE bet
-        section.betHistory.push({
-          period: period.period,
-          betColor: resolvedBet.color,
-          actualColor,
-          won
-        });
-
-        if (won) {
-          section.totalWins++;
-          addLog(
-            `✅ [${section.name}] WIN! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
-            'win'
-          );
-          hideSignalBanner();
-          playAlertSound();
-          showToast(`✅ ${section.name} WIN!`, 'success');
-        } else {
-          section.totalLosses++;
-          addLog(
-            `❌ [${section.name}] LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}.`,
-            'loss'
-          );
-          hideSignalBanner();
-        }
-
-        section.consecutiveLosses = 0;
-        section.waitingForSignalPattern = false;
-        section.skipUntilTrendBreaks = false;
-        section.strategyState = 'HUNTING';
+        section.totalLosses++;
+        addLog(
+          `❌ [${section.name}] LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}.`,
+          'loss'
+        );
+        hideSignalBanner();
       }
+
+      section.strategyState = 'HUNTING';
     }
   }
 
@@ -867,19 +750,8 @@ function processNewData(key, apiData) {
   section.lastKnownPeriod = latestPeriodInData;
   section.nextPeriod = newNextPeriod;
 
-  // Run strategy state machine to set next bet
+  // Hunt for next pattern if no active bet
   if (!section.pendingBet) {
-    if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
-      if (hasLatestTrendBreak(section.periods)) {
-        section.strategyState = 'HUNTING';
-        section.skipUntilTrendBreaks = false;
-        addLog(
-          `[${section.name}] Alternate pattern broken. Ab next pattern par LIVE signal ready.`,
-          'info'
-        );
-      }
-    }
-
     armBetFromCurrentPattern(key, newNextPeriod);
   }
 }
@@ -889,15 +761,12 @@ function processNewData(key, apiData) {
 function resetAllSections() {
   for (const key of Object.keys(state.sections)) {
     const section = state.sections[key];
-    section.consecutiveLosses = 0;
     section.pendingBet = null;
     section.patternDetected = false;
     section.patternColors = null;
     section.totalWins = 0;
     section.totalLosses = 0;
     section.betHistory = [];
-    section.skipUntilTrendBreaks = false;
-    section.waitingForSignalPattern = false;
     section.freshStartArmed = false;
     section.freshStartAnchorPeriod = 0;
     section.strategyState = 'HUNTING';
@@ -913,18 +782,15 @@ function startFreshSignalsNow() {
     const ignoreCurrentPattern = sectionHasLiveAlternatingPattern(section);
     const anchorPeriod = section.lastKnownPeriod || section.periods[section.periods.length - 1]?.period || 0;
 
-    section.consecutiveLosses = 0;
     section.pendingBet = null;
     section.patternDetected = false;
     section.patternColors = null;
     section.totalWins = 0;
     section.totalLosses = 0;
     section.betHistory = [];
-    section.waitingForSignalPattern = false;
     section.freshStartArmed = ignoreCurrentPattern;
     section.freshStartAnchorPeriod = anchorPeriod;
-    section.skipUntilTrendBreaks = ignoreCurrentPattern;
-    section.strategyState = ignoreCurrentPattern ? 'WAITING_FOR_TREND_BREAK' : 'HUNTING';
+    section.strategyState = 'HUNTING';
   }
 
   hideSignalBanner();
@@ -971,7 +837,7 @@ function renderSection(key) {
 
   // Bet info
   const betEl = document.getElementById(`bet-${key}`);
-  if (section.pendingBet && !section.pendingBet.isVirtual) {
+  if (section.pendingBet) {
     const colorLabel = colorName(section.pendingBet.color);
     betEl.textContent = `Bet: ${colorLabel}`;
     betEl.className = `bet-info bet-${colorLabel.toLowerCase()}`;
@@ -984,35 +850,20 @@ function renderSection(key) {
   document.getElementById(`wins-${key}`).textContent = `W: ${section.totalWins}`;
   document.getElementById(`losses-${key}`).textContent = `L: ${section.totalLosses}`;
   
-  // Strategy state label with clear step info
+  // Strategy state label — simple: Hunting or LIVE
   let stateLabel = '🔍 Hunting';
-  if (section.strategyState === 'WAITING_FOR_FIRST_LOSS') {
-    stateLabel = '⏳ Wait 1 Loss';
-  } else if (section.strategyState === 'WAITING_FOR_TREND_BREAK' && section.waitingForSignalPattern) {
-    stateLabel = '1 Loss ✅ | Wait Break';
-  } else if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
-    stateLabel = 'Wait Break';
-  } else if (section.strategyState === 'HUNTING' && section.waitingForSignalPattern) {
-    stateLabel = '1 Loss ✅ | Next Signal';
-  } else if (section.strategyState === 'SIGNAL_ACTIVE') {
+  if (section.strategyState === 'SIGNAL_ACTIVE') {
     stateLabel = '🎯 LIVE Signal';
+  } else if (section.patternDetected) {
+    stateLabel = '📊 Pattern Found';
   }
   document.getElementById(`streak-${key}`).textContent = stateLabel;
 
   // Section status badge
   const statusEl = document.getElementById(`status-${key}`);
-  if (section.pendingBet && !section.pendingBet.isVirtual) {
+  if (section.pendingBet) {
     statusEl.textContent = '🎯 TRADE';
     statusEl.className = 'section-status status-signal';
-  } else if (section.strategyState === 'WAITING_FOR_FIRST_LOSS') {
-    statusEl.textContent = '⏳ Wait Loss';
-    statusEl.className = 'section-status status-hunting';
-  } else if (section.waitingForSignalPattern && section.strategyState === 'WAITING_FOR_TREND_BREAK') {
-    statusEl.textContent = '1 Loss ✅';
-    statusEl.className = 'section-status status-pattern';
-  } else if (section.waitingForSignalPattern) {
-    statusEl.textContent = '1 Loss ✅ Ready';
-    statusEl.className = 'section-status status-pattern';
   } else if (hasFreshSignalState(section)) {
     statusEl.textContent = 'Fresh Reset';
     statusEl.className = 'section-status status-watching';
@@ -1028,13 +879,9 @@ function renderSection(key) {
   const cardEl = document.getElementById(`card-${key}`);
   cardEl.classList.remove('active', 'signal-triggered', 'signal-green', 'signal-red', 'paused', 'hunting');
 
-  if (section.pendingBet && !section.pendingBet.isVirtual) {
+  if (section.pendingBet) {
     cardEl.classList.add('signal-triggered');
     cardEl.classList.add(section.pendingBet.color === 'G' ? 'signal-green' : 'signal-red');
-  } else if (section.waitingForSignalPattern) {
-    cardEl.classList.add('hunting');
-  } else if (section.strategyState === 'WAITING_FOR_FIRST_LOSS') {
-    cardEl.classList.add('active');
   } else if (section.patternDetected) {
     cardEl.classList.add('active');
   }
@@ -1153,17 +1000,13 @@ function renderStrategyPanel() {
   // Find sections with active trades
   const activeTrades = [];
   for (const [key, section] of Object.entries(state.sections)) {
-    if (section.pendingBet && !section.pendingBet.isVirtual) {
+    if (section.pendingBet) {
       activeTrades.push({ key, section });
     }
   }
 
-  const primedSections = Object.values(state.sections)
-    .filter(section => section.waitingForSignalPattern && section.strategyState === 'HUNTING');
-  const waitLossSections = Object.values(state.sections)
-    .filter(section => section.strategyState === 'WAITING_FOR_FIRST_LOSS');
-  const waitBreakSections = Object.values(state.sections)
-    .filter(section => section.strategyState === 'WAITING_FOR_TREND_BREAK');
+  const patternSections = Object.values(state.sections)
+    .filter(section => section.patternDetected);
 
   if (activeTrades.length > 0) {
     modeText.textContent = '🎯 TRADE ACTIVE';
@@ -1179,23 +1022,13 @@ function renderStrategyPanel() {
     });
     nextSignalText.textContent = tradeTexts.join(' | ');
     nextSignalText.style.color = '';
-  } else if (primedSections.length > 0) {
-    modeText.textContent = 'NEXT PATTERN';
+  } else if (patternSections.length > 0) {
+    modeText.textContent = '📊 PATTERN FOUND';
     modeText.className = 'value hunting-mode';
-    activeSectionText.textContent = primedSections.map(section => section.name).join(', ');
-    appStatus.textContent = 'ARMED';
+    activeSectionText.textContent = patternSections.map(s => s.name).join(', ');
+    appStatus.textContent = 'PATTERN';
     appStatus.className = 'status-badge hunting';
-    nextSignalText.textContent = '1 loss aur alternate break done. Next pattern par live signal milega.';
-    nextSignalText.style.color = '';
-  } else if (waitLossSections.length > 0 || waitBreakSections.length > 0) {
-    modeText.textContent = 'FILTERING';
-    modeText.className = 'value hunting-mode';
-    activeSectionText.textContent = 'All Sections';
-    appStatus.textContent = 'WAITING';
-    appStatus.className = 'status-badge hunting';
-    nextSignalText.textContent = waitLossSections.length > 0
-      ? 'Pattern mila hai. Pehle 1 virtual loss confirm kar rahe hain.'
-      : '1 virtual loss done. Alternate pattern break ka wait hai.';
+    nextSignalText.textContent = 'Pattern detected! Signal will fire on next period.';
     nextSignalText.style.color = '';
   } else if (freshResetActive) {
     modeText.textContent = 'FRESH WATCH';
@@ -1211,7 +1044,7 @@ function renderStrategyPanel() {
     activeSectionText.textContent = 'All Sections';
     appStatus.textContent = 'WATCHING ALL';
     appStatus.className = 'status-badge watching';
-    nextSignalText.textContent = 'Monitoring all sections for patterns...';
+    nextSignalText.textContent = 'Monitoring all sections for RGR/GRG patterns...';
     nextSignalText.style.color = '';
   }
 }
@@ -1240,7 +1073,7 @@ function showSignalBanner(key) {
 
   mainText.textContent = `🎯 TRADE: ${section.name.toUpperCase()}`;
 
-  if (section.pendingBet && !section.pendingBet.isVirtual) {
+  if (section.pendingBet) {
     const betColor = colorName(section.pendingBet.color);
     const periodStr = formatPeriod(section.pendingBet.period);
     subText.textContent = `Next Bet: ${betColor} on Period #${periodStr}`;
@@ -1278,7 +1111,7 @@ function updateSignalBanner(key) {
   const section = state.sections[key];
   const subText = document.getElementById('signal-sub-text');
 
-  if (section.pendingBet && !section.pendingBet.isVirtual) {
+  if (section.pendingBet) {
     const betColor = colorName(section.pendingBet.color);
     const periodStr = formatPeriod(section.pendingBet.period);
     subText.textContent = `Next Bet: ${betColor} on Period #${periodStr}`;
@@ -1296,16 +1129,14 @@ function updateSignalBanner(key) {
       );
     }
   } else {
-    subText.textContent = section.waitingForSignalPattern
-      ? '1 loss + break done. Waiting for next pattern...'
-      : 'Waiting for 1 virtual loss...';
+    subText.textContent = 'Hunting for RGR/GRG pattern...';
   }
 }
 
 function hideSignalBanner() {
   // Check if any other section still has an active live bet
   const activeSectionKey = Object.keys(state.sections).find(
-    key => state.sections[key].pendingBet && !state.sections[key].pendingBet.isVirtual
+    key => state.sections[key].pendingBet
   );
 
   if (activeSectionKey) {
@@ -1328,7 +1159,7 @@ function renderTradeBanner(key) {
   const colorEl = document.getElementById(`trade-banner-color-${key}`);
   const periodEl = document.getElementById(`trade-banner-period-${key}`);
 
-  if (section.pendingBet && !section.pendingBet.isVirtual) {
+  if (section.pendingBet) {
     const betColor = section.pendingBet.color;
     const betColorLabel = colorName(betColor);
     const periodStr = formatPeriod(section.pendingBet.period);
