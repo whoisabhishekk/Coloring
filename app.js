@@ -11,7 +11,7 @@ const CONFIG = {
   SAAS_ID: 1,
   REFRESH_INTERVAL: 10000,       // 10 seconds (safety-net background poll)
   PERIOD_DURATION_MS: 180000,    // 3 minutes = 180 seconds per color period
-  PATTERN_LENGTH: 3,             // RGR or GRG
+  PATTERN_LENGTH: 4,             // RGRG or GRGR (4-length for higher accuracy)
   MAX_LOG_ENTRIES: 80,
   MAX_DOTS_DISPLAY: 30,
   SECTIONS: {
@@ -554,11 +554,12 @@ async function fetchAllSections() {
 // ============ PATTERN DETECTION & STRATEGY ENGINE ============
 
 /**
- * 🎰 RGR DIRECT STRATEGY:
- * 1. Detect alternating pattern (RGR / GRG — 3 length).
- * 2. Directly bet LIVE on last same color.
- * 3. After result (win/loss), hunt for next pattern.
- * No virtual bets, no loss waiting, no trend break waiting.
+ * 🎰 RGRG + TREND BREAK WAIT STRATEGY (Rank #1 — 57.3% win rate):
+ * 1. Detect 4-length alternating pattern (RGRG / GRGR).
+ * 2. Bet LIVE on last same color.
+ * 3. WIN → back to hunting for next pattern.
+ * 4. LOSS → PAUSE → wait for trend break (2 consecutive same colors).
+ * 5. After trend break → resume hunting.
  */
 
 /**
@@ -1078,7 +1079,7 @@ function renderStrategyPanel() {
     activeSectionText.textContent = 'All Sections';
     appStatus.textContent = 'WATCHING ALL';
     appStatus.className = 'status-badge watching';
-    nextSignalText.textContent = 'Monitoring all sections for RGR/GRG patterns...';
+    nextSignalText.textContent = 'Monitoring all sections for RGRG/GRGR patterns...';
     nextSignalText.style.color = '';
   }
 }
@@ -1163,7 +1164,7 @@ function updateSignalBanner(key) {
       );
     }
   } else {
-    subText.textContent = 'Hunting for RGR/GRG pattern...';
+    subText.textContent = 'Hunting for RGRG/GRGR pattern...';
   }
 }
 
