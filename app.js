@@ -55,7 +55,7 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     patternColors: null,
     freshStartArmed: false,
     freshStartAnchorPeriod: 0,
-    strategyState: 'HUNTING',   // 'HUNTING' | 'SIGNAL_ACTIVE'
+    strategyState: 'HUNTING',   // 'HUNTING' | 'SIGNAL_ACTIVE' | 'WAITING_FOR_TREND_BREAK'
     lastNotifiedPeriod: 0
   };
 }
@@ -597,15 +597,25 @@ function scanHistoryForSection(section) {
 
       if (won) {
         section.totalWins++;
+        section.strategyState = 'HUNTING';
       } else {
         section.totalLosses++;
+        section.strategyState = 'WAITING_FOR_TREND_BREAK';
       }
 
-      section.strategyState = 'HUNTING';
       activeBet = null;
     }
 
     if (activeBet) continue;
+
+    // Check for trend break if we are waiting for one
+    if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
+      if (i > 0 && getColor(periods[i - 1]) === getColor(periods[i])) {
+        section.strategyState = 'HUNTING';
+      }
+    }
+
+    if (section.strategyState !== 'HUNTING') continue;
 
     // Hunt for pattern
     if (i < CONFIG.PATTERN_LENGTH - 1) continue;
@@ -732,6 +742,7 @@ function processNewData(key, apiData) {
         hideSignalBanner();
         playAlertSound();
         showToast(`✅ ${section.name} WIN!`, 'success');
+        section.strategyState = 'HUNTING';
       } else {
         section.totalLosses++;
         addLog(
@@ -739,9 +750,8 @@ function processNewData(key, apiData) {
           'loss'
         );
         hideSignalBanner();
+        section.strategyState = 'WAITING_FOR_TREND_BREAK';
       }
-
-      section.strategyState = 'HUNTING';
     }
   }
 
@@ -750,8 +760,16 @@ function processNewData(key, apiData) {
   section.lastKnownPeriod = latestPeriodInData;
   section.nextPeriod = newNextPeriod;
 
-  // Hunt for next pattern if no active bet
-  if (!section.pendingBet) {
+  // Check for trend break if we are waiting for one
+  if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
+    if (hasLatestTrendBreak(section.periods)) {
+      section.strategyState = 'HUNTING';
+      addLog(`🔄 [${section.name}] Trend ended (consecutive same colors). Re-armed and hunting.`, 'info');
+    }
+  }
+
+  // Hunt for next pattern if no active bet and state is HUNTING
+  if (!section.pendingBet && section.strategyState === 'HUNTING') {
     armBetFromCurrentPattern(key, newNextPeriod);
   }
 }
@@ -854,6 +872,8 @@ function renderSection(key) {
   let stateLabel = '🔍 Hunting';
   if (section.strategyState === 'SIGNAL_ACTIVE') {
     stateLabel = '🎯 LIVE Signal';
+  } else if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
+    stateLabel = '⏳ Wait Trend';
   } else if (section.patternDetected) {
     stateLabel = '📊 Pattern Found';
   }
@@ -864,6 +884,9 @@ function renderSection(key) {
   if (section.pendingBet) {
     statusEl.textContent = '🎯 TRADE';
     statusEl.className = 'section-status status-signal';
+  } else if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
+    statusEl.textContent = 'Wait Trend';
+    statusEl.className = 'section-status status-watching';
   } else if (hasFreshSignalState(section)) {
     statusEl.textContent = 'Fresh Reset';
     statusEl.className = 'section-status status-watching';
@@ -1008,6 +1031,9 @@ function renderStrategyPanel() {
   const patternSections = Object.values(state.sections)
     .filter(section => section.patternDetected);
 
+  const waitingSections = Object.values(state.sections)
+    .filter(section => section.strategyState === 'WAITING_FOR_TREND_BREAK');
+
   if (activeTrades.length > 0) {
     modeText.textContent = '🎯 TRADE ACTIVE';
     modeText.className = 'value signal-mode';
@@ -1029,6 +1055,14 @@ function renderStrategyPanel() {
     appStatus.textContent = 'PATTERN';
     appStatus.className = 'status-badge hunting';
     nextSignalText.textContent = 'Pattern detected! Signal will fire on next period.';
+    nextSignalText.style.color = '';
+  } else if (waitingSections.length > 0) {
+    modeText.textContent = '⏳ WAIT TREND';
+    modeText.className = 'value reset-mode';
+    activeSectionText.textContent = waitingSections.map(s => s.name).join(', ');
+    appStatus.textContent = 'WAIT TREND';
+    appStatus.className = 'status-badge watching';
+    nextSignalText.textContent = 'Waiting for alternating trend to end before hunting next signal.';
     nextSignalText.style.color = '';
   } else if (freshResetActive) {
     modeText.textContent = 'FRESH WATCH';
