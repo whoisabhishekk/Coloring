@@ -1296,4 +1296,114 @@ body {
   transform: translateX(18px);
 }
 
+/* ============ SNIPER LOSS TRACKER ============ */
 
+.sniper-tracker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.4s ease;
+}
+
+.sniper-tracker.tracker-ready {
+  background: rgba(46, 213, 115, 0.08);
+  border-color: rgba(46, 213, 115, 0.25);
+  box-shadow: 0 0 12px rgba(46, 213, 115, 0.1);
+}
+
+.sniper-tracker.tracker-live {
+  background: rgba(255, 165, 2, 0.1);
+  border-color: rgba(255, 165, 2, 0.3);
+  box-shadow: 0 0 16px rgba(255, 165, 2, 0.15);
+  animation: trackerPulse 2s ease-in-out infinite;
+}
+
+@keyframes trackerPulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(255, 165, 2, 0.1); }
+  50% { box-shadow: 0 0 20px rgba(255, 165, 2, 0.25); }
+}
+
+.sniper-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.sniper-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sniper-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.sniper-dot.filled {
+  background: var(--color-red);
+  border-color: rgba(255, 71, 87, 0.6);
+  box-shadow: 0 0 8px rgba(255, 71, 87, 0.4);
+  animation: dotFill 0.4s ease-out;
+}
+
+.sniper-dot.filled.ready {
+  background: var(--color-green);
+  border-color: rgba(46, 213, 115, 0.6);
+  box-shadow: 0 0 10px rgba(46, 213, 115, 0.5);
+  animation: dotReady 0.6s ease-out;
+}
+
+@keyframes dotFill {
+  0% { transform: scale(0.5); opacity: 0.3; }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes dotReady {
+  0% { transform: scale(0.8); }
+  40% { transform: scale(1.4); }
+  70% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+
+.sniper-count {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  margin-left: auto;
+  min-width: 32px;
+  text-align: right;
+}
+
+.sniper-count.sniper-ready {
+  color: var(--color-green);
+  text-shadow: 0 0 8px rgba(46, 213, 115, 0.5);
+  animation: countPulse 1.5s ease-in-out infinite;
+}
+
+.sniper-count.sniper-live {
+  color: #ffa502;
+  text-shadow: 0 0 10px rgba(255, 165, 2, 0.6);
+  font-size: 0.8rem;
+  animation: countPulse 1s ease-in-out infinite;
+}
+
+@keyframes countPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}

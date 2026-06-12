@@ -1185,6 +1185,9 @@ function renderSection(key) {
 
   // Bet history ribbon
   renderBetHistory(key);
+
+  // Sniper loss tracker
+  renderSniperTracker(key);
 }
 
 function renderColorDots(key) {
@@ -1252,6 +1255,58 @@ function renderBetHistory(key) {
     dot.title = `Bet: ${colorName(bet.betColor)}, Got: ${colorName(bet.actualColor)} → ${bet.won ? 'WIN' : 'LOSS'}`;
     container.appendChild(dot);
   });
+}
+
+function renderSniperTracker(key) {
+  const section = state.sections[key];
+  const tracker = document.getElementById(`sniper-tracker-${key}`);
+  if (!tracker) return;
+
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
+
+  // Only show for Sniper strategy
+  if (strategy !== 'SNIPER_3_LOSS_RGRG' || section.disabled) {
+    tracker.style.display = 'none';
+    return;
+  }
+
+  tracker.style.display = '';
+
+  const count = section.virtualLossCount || 0;
+  const countEl = document.getElementById(`sniper-count-${key}`);
+  const isReady = section.strategyState === 'READY_FOR_LIVE';
+  const isLive = section.strategyState === 'SIGNAL_ACTIVE' && section.pendingBet && !section.pendingBet.isVirtual;
+
+  // Update dots
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById(`sniper-dot-${key}-${i}`);
+    if (!dot) continue;
+
+    dot.classList.remove('filled', 'ready');
+    if (i <= count) {
+      dot.classList.add('filled');
+    }
+    if (count >= 3 || isReady || isLive) {
+      dot.classList.add('ready');
+    }
+  }
+
+  // Update count text
+  if (isLive) {
+    countEl.textContent = '🎯 LIVE!';
+    countEl.className = 'sniper-count sniper-live';
+    tracker.classList.add('tracker-live');
+    tracker.classList.remove('tracker-ready');
+  } else if (isReady || count >= 3) {
+    countEl.textContent = '✅ READY!';
+    countEl.className = 'sniper-count sniper-ready';
+    tracker.classList.add('tracker-ready');
+    tracker.classList.remove('tracker-live');
+  } else {
+    countEl.textContent = `${count}/3`;
+    countEl.className = 'sniper-count';
+    tracker.classList.remove('tracker-ready', 'tracker-live');
+  }
 }
 
 function renderLog(entry) {
