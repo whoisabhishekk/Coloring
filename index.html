@@ -64,6 +64,16 @@
         <span id="next-signal-text" class="value">--</span>
       </div>
     </div>
+    <div class="strategy-selector-row">
+      <label for="strategy-select" class="strategy-select-label">Strategy Mode:</label>
+      <select id="strategy-select" class="strategy-select-dropdown" onchange="changeStrategy(this.value)">
+        <option value="RGRG_TREND_BREAK">🎯 RGRG + Trend Break Wait (Balanced/Safe)</option>
+        <option value="CONTRARIAN_DOUBLE">🔥 Contrarian Double RR→G (Highest Profit)</option>
+        <option value="BREAK_OPPOSITE">⚡ Break→Opposite ABB→opp (High Profit)</option>
+        <option value="STREAK_BREAK_3">💎 Streak Break 3+same→opp (Consistent)</option>
+        <option value="SNIPER_3_LOSS_RGRG">🎯 Sniper 3-Loss Wait + RGRG (High Win% - Rare)</option>
+      </select>
+    </div>
     <div class="strategy-actions">
       <button id="fresh-signals-btn" class="control-button" onclick="startFreshSignalsNow()">
         Fresh Signals From Now
@@ -79,7 +89,13 @@
     <div class="section-card" data-section="P" id="card-P">
       <div class="section-header">
         <span class="section-name">🎯 Parity</span>
-        <span class="section-status status-watching" id="status-P">Watching</span>
+        <div class="header-controls">
+          <span class="section-status status-watching" id="status-P">Watching</span>
+          <label class="switch-toggle" title="Enable/Disable Section">
+            <input type="checkbox" id="toggle-P" checked onchange="toggleSection('P', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
       </div>
       <div class="trade-card-banner hidden" id="trade-banner-P">
         <div class="trade-banner-icon">🚨</div>
@@ -112,7 +128,13 @@
     <div class="section-card" data-section="S" id="card-S">
       <div class="section-header">
         <span class="section-name">⚡ Sapre</span>
-        <span class="section-status status-watching" id="status-S">Watching</span>
+        <div class="header-controls">
+          <span class="section-status status-watching" id="status-S">Watching</span>
+          <label class="switch-toggle" title="Enable/Disable Section">
+            <input type="checkbox" id="toggle-S" checked onchange="toggleSection('S', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
       </div>
       <div class="trade-card-banner hidden" id="trade-banner-S">
         <div class="trade-banner-icon">🚨</div>
@@ -145,7 +167,13 @@
     <div class="section-card" data-section="B" id="card-B">
       <div class="section-header">
         <span class="section-name">🔥 Bcone</span>
-        <span class="section-status status-watching" id="status-B">Watching</span>
+        <div class="header-controls">
+          <span class="section-status status-watching" id="status-B">Watching</span>
+          <label class="switch-toggle" title="Enable/Disable Section">
+            <input type="checkbox" id="toggle-B" checked onchange="toggleSection('B', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
       </div>
       <div class="trade-card-banner hidden" id="trade-banner-B">
         <div class="trade-banner-icon">🚨</div>
@@ -178,7 +206,13 @@
     <div class="section-card" data-section="E" id="card-E">
       <div class="section-header">
         <span class="section-name">💎 Emerd</span>
-        <span class="section-status status-watching" id="status-E">Watching</span>
+        <div class="header-controls">
+          <span class="section-status status-watching" id="status-E">Watching</span>
+          <label class="switch-toggle" title="Enable/Disable Section">
+            <input type="checkbox" id="toggle-E" checked onchange="toggleSection('E', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
       </div>
       <div class="trade-card-banner hidden" id="trade-banner-E">
         <div class="trade-banner-icon">🚨</div>
