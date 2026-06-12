@@ -37,7 +37,7 @@ const state = {
   boundaryFollowUp2: null,   // Follow-up fetch 8s after boundary
   countdownInterval: null,   // setInterval for live countdown display
   lastBoundaryFetch: 0,      // Timestamp of last boundary-triggered fetch
-  selectedStrategy: localStorage.getItem('wingo-selected-strategy') || 'RGRG_TREND_BREAK'
+  selectedStrategy: localStorage.getItem('wingo-selected-strategy') || 'SNIPER_3_LOSS_RGRG'
 };
 
 // Initialize section states
@@ -430,7 +430,7 @@ function addLog(message, type = 'info') {
 }
 
 function sectionHasLiveAlternatingPattern(section) {
-  const strategy = state.selectedStrategy || 'RGRG_TREND_BREAK';
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   const len = getStrategyPatternLength(strategy);
   if (section.periods.length < len) return false;
 
@@ -539,7 +539,7 @@ function armBetFromCurrentPattern(key, nextPeriod) {
   checkCurrentPattern(section);
   if (!section.patternDetected || !section.patternColors) return false;
 
-  const strategy = state.selectedStrategy || 'RGRG_TREND_BREAK';
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   let betColor = null;
 
   if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
@@ -645,7 +645,7 @@ function scanHistoryForSection(section) {
     return;
   }
 
-  const strategy = state.selectedStrategy || 'RGRG_TREND_BREAK';
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   const len = getStrategyPatternLength(strategy);
   let activeBet = null; // { color, period, isVirtual }
   let virtualLossCount = 0;
@@ -765,7 +765,7 @@ function scanHistoryForSection(section) {
 
 function checkCurrentPattern(section) {
   const allPeriods = section.periods;
-  const strategy = state.selectedStrategy || 'RGRG_TREND_BREAK';
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   const len = getStrategyPatternLength(strategy);
 
   if (allPeriods.length < len) {
@@ -882,7 +882,7 @@ function processNewData(key, apiData) {
 
       const actualColor = getColor(period);
       const won = actualColor === resolvedBet.color;
-      const strategy = state.selectedStrategy || 'RGRG_TREND_BREAK';
+      const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
 
       if (resolvedBet.isVirtual) {
         // Resolve virtual bet (Sniper mode)
@@ -949,7 +949,7 @@ function processNewData(key, apiData) {
   section.nextPeriod = newNextPeriod;
 
   // Check for trend break if we are waiting for one
-  const strategy = state.selectedStrategy || 'RGRG_TREND_BREAK';
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
     if (hasLatestTrendBreak(section.periods)) {
       section.strategyState = 'HUNTING';
@@ -1198,7 +1198,7 @@ function renderColorDots(key) {
 
   // Determine pattern highlight range
   let patternStart = -1;
-  const strategy = state.selectedStrategy || 'RGRG_TREND_BREAK';
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   const len = getStrategyPatternLength(strategy);
   if (section.patternDetected && displayPeriods.length >= len) {
     patternStart = displayPeriods.length - len;
