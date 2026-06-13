@@ -1,0 +1,137 @@
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║           🏆 MEGA BACKTEST — 17 STRATEGIES COMPARED 🏆                 ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+  ✅ Parity: 13 periods loaded
+  ✅ Sapre: 13 periods loaded
+  ✅ Bcone: 13 periods loaded
+  ✅ Emerd: 13 periods loaded
+
+  📦 Total: 52 periods across 4 categories
+
+═══════════════════════════════════════════════════════════════════════════════════
+  RANKING BY NET PROFIT (Wins - Losses)
+═══════════════════════════════════════════════════════════════════════════════════
+
+  #  │ Strategy                      │ Signals │ W    │ L    │ Win%   │ Net  │ MaxL │ MaxW
+  ───┼───────────────────────────────┼─────────┼──────┼──────┼────────┼──────┼──────┼─────
+  🥇 │ 🏄 Streak Follow (2+same→same) │      22 │   14 │    8 │  63.6% │   +6 │    2 │    4
+  🥈 │ 🔄 RGR Opposite               │      14 │    9 │    5 │  64.3% │   +4 │    1 │    4
+  🥉 │ ⏳ RGRG + Trend Break Wait     │       5 │    3 │    2 │  60.0% │   +1 │    1 │    1
+     │ 💥 Streak Break (4+same→opp)  │       8 │    4 │    4 │  50.0% │   +0 │    2 │    2
+     │ 📊 RGRG Direct (4-length)     │       8 │    4 │    4 │  50.0% │   +0 │    3 │    1
+     │ 🟢 Green Only RGR             │       7 │    3 │    4 │  42.9% │   -1 │    2 │    1
+     │ 👑 RGRGRG (5-length)          │       3 │    1 │    2 │  33.3% │   -1 │    2 │    1
+     │ 💥 Streak Break (3+same→opp)  │      14 │    6 │    8 │  42.9% │   -2 │    3 │    1
+     │ 🎪 Break→Opposite (ABB→opp)   │       6 │    2 │    4 │  33.3% │   -2 │    1 │    1
+     │ ❄️ RGR + Cooldown(3)          │       7 │    2 │    5 │  28.6% │   -3 │    2 │    1
+     │ 🔴 Red Only RGR               │       7 │    2 │    5 │  28.6% │   -3 │    3 │    1
+     │ 📌 RGR Direct (CURRENT)       │      14 │    5 │    9 │  35.7% │   -4 │    4 │    1 ◀ CURRENT
+     │ ✌️ Double Confirm (win→bet)   │       8 │    2 │    6 │  25.0% │   -4 │    3 │    1
+     │ 🔥 Win Streak Rider           │       8 │    2 │    6 │  25.0% │   -4 │    3 │    1
+     │ ⏸️ RGR + Max 2 then pause     │       8 │    2 │    6 │  25.0% │   -4 │    3 │    1
+     │ ❄️ RGR + Cooldown(5)          │       6 │    1 │    5 │  16.7% │   -4 │    2 │    1
+     │ ⏳ RGR + Trend Break Wait      │       6 │    1 │    5 │  16.7% │   -4 │    2 │    1
+     │ 🎯 Contrarian Double (RR→G)   │      22 │    8 │   14 │  36.4% │   -6 │    4 │    2
+     │ 🪙 RGR + Flip On Loss         │      14 │    4 │   10 │  28.6% │   -6 │    2 │    1
+
+  MaxL = Max consecutive losses | MaxW = Max consecutive wins
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+  🏆 TOP 5 STRATEGIES — CATEGORY-WISE BREAKDOWN
+═══════════════════════════════════════════════════════════════════════════════════
+
+  🏄 Streak Follow (2+same→same) — Overall: 63.6% win, Net +6, 22 signals
+  ┌─────────┬─────────┬──────┬──────┬────────┐
+  │ Section │ Signals │ Wins │ Loss │ Win%   │
+  ├─────────┼─────────┼──────┼──────┼────────┤
+  │ Parity  │       8 │    6 │    2 │  75.0% │
+  │ Sapre   │       9 │    6 │    3 │  66.7% │
+  │ Bcone   │       3 │    1 │    2 │  33.3% │
+  │ Emerd   │       2 │    1 │    1 │  50.0% │
+  └─────────┴─────────┴──────┴──────┴────────┘
+
+  🔄 RGR Opposite — Overall: 64.3% win, Net +4, 14 signals
+  ┌─────────┬─────────┬──────┬──────┬────────┐
+  │ Section │ Signals │ Wins │ Loss │ Win%   │
+  ├─────────┼─────────┼──────┼──────┼────────┤
+  │ Parity  │       2 │    1 │    1 │  50.0% │
+  │ Sapre   │       0 │    0 │    0 │   0.0% │
+  │ Bcone   │       5 │    3 │    2 │  60.0% │
+  │ Emerd   │       7 │    5 │    2 │  71.4% │
+  └─────────┴─────────┴──────┴──────┴────────┘
+
+  ⏳ RGRG + Trend Break Wait — Overall: 60.0% win, Net +1, 5 signals
+  ┌─────────┬─────────┬──────┬──────┬────────┐
+  │ Section │ Signals │ Wins │ Loss │ Win%   │
+  ├─────────┼─────────┼──────┼──────┼────────┤
+  │ Parity  │       1 │    1 │    0 │ 100.0% │
+  │ Sapre   │       0 │    0 │    0 │   0.0% │
+  │ Bcone   │       2 │    1 │    1 │  50.0% │
+  │ Emerd   │       2 │    1 │    1 │  50.0% │
+  └─────────┴─────────┴──────┴──────┴────────┘
+
+  💥 Streak Break (4+same→opp) — Overall: 50.0% win, Net +0, 8 signals
+  ┌─────────┬─────────┬──────┬──────┬────────┐
+  │ Section │ Signals │ Wins │ Loss │ Win%   │
+  ├─────────┼─────────┼──────┼──────┼────────┤
+  │ Parity  │       4 │    2 │    2 │  50.0% │
+  │ Sapre   │       4 │    2 │    2 │  50.0% │
+  │ Bcone   │       0 │    0 │    0 │   0.0% │
+  │ Emerd   │       0 │    0 │    0 │   0.0% │
+  └─────────┴─────────┴──────┴──────┴────────┘
+
+  📊 RGRG Direct (4-length) — Overall: 50.0% win, Net +0, 8 signals
+  ┌─────────┬─────────┬──────┬──────┬────────┐
+  │ Section │ Signals │ Wins │ Loss │ Win%   │
+  ├─────────┼─────────┼──────┼──────┼────────┤
+  │ Parity  │       1 │    1 │    0 │ 100.0% │
+  │ Sapre   │       0 │    0 │    0 │   0.0% │
+  │ Bcone   │       2 │    1 │    1 │  50.0% │
+  │ Emerd   │       5 │    2 │    3 │  40.0% │
+  └─────────┴─────────┴──────┴──────┴────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+  💰 PROFIT SIMULATION (₹100 flat bet per signal)
+═══════════════════════════════════════════════════════════════════════════════════
+
+  #  │ Strategy                      │ Gross Profit │ Net ₹
+  ───┼───────────────────────────────┼──────────────┼──────────
+  🥇 │ 🏄 Streak Follow (2+same→same) │        +₹544 │ +₹544
+  🥈 │ 🔄 RGR Opposite               │        +₹364 │ +₹364
+  🥉 │ ⏳ RGRG + Trend Break Wait     │         +₹88 │ +₹88
+     │ 💥 Streak Break (4+same→opp)  │         ₹-16 │ ₹-16
+     │ 📊 RGRG Direct (4-length)     │         ₹-16 │ ₹-16
+     │ 👑 RGRGRG (5-length)          │        ₹-104 │ ₹-104
+     │ 🟢 Green Only RGR             │        ₹-112 │ ₹-112
+     │ 🎪 Break→Opposite (ABB→opp)   │        ₹-208 │ ₹-208
+     │ 💥 Streak Break (3+same→opp)  │        ₹-224 │ ₹-224
+     │ ❄️ RGR + Cooldown(3)          │        ₹-308 │ ₹-308
+     │ 🔴 Red Only RGR               │        ₹-308 │ ₹-308
+     │ ❄️ RGR + Cooldown(5)          │        ₹-404 │ ₹-404
+     │ ⏳ RGR + Trend Break Wait      │        ₹-404 │ ₹-404
+     │ ✌️ Double Confirm (win→bet)   │        ₹-408 │ ₹-408
+     │ 🔥 Win Streak Rider           │        ₹-408 │ ₹-408
+     │ ⏸️ RGR + Max 2 then pause     │        ₹-408 │ ₹-408
+     │ 📌 RGR Direct (CURRENT)       │        ₹-420 │ ₹-420
+     │ 🪙 RGR + Flip On Loss         │        ₹-616 │ ₹-616
+     │ 🎯 Contrarian Double (RR→G)   │        ₹-632 │ ₹-632
+
+  Note: Assuming 1.96x payout (96% profit on win, 100% loss on loss)
+        Higher payout = more profit for winning strategies
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+  🎯 FINAL VERDICT
+═══════════════════════════════════════════════════════════════════════════════════
+
+  💰 Most Profitable:  🏄 Streak Follow (2+same→same) (₹544 on ₹100/bet)
+  📈 Best Win Rate:    🔄 RGR Opposite (64.3%)
+  🛡️ Safest (low loss): 🏄 Streak Follow (2+same→same) (max 2 consecutive losses)
+  ⚖️ Best Balanced:    🏄 Streak Follow (2+same→same) (Net +6, 63.6%)
+
+═══════════════════════════════════════════════════════════════════════════════════
+

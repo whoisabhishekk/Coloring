@@ -37,7 +37,7 @@ const state = {
   boundaryFollowUp2: null,   // Follow-up fetch 8s after boundary
   countdownInterval: null,   // setInterval for live countdown display
   lastBoundaryFetch: 0,      // Timestamp of last boundary-triggered fetch
-  selectedStrategy: localStorage.getItem('wingo-selected-strategy') || 'SNIPER_3_LOSS_RGRG'
+  selectedStrategy: localStorage.getItem('wingo-selected-strategy') || 'ANTI_MARTINGALE_SELECT'
 };
 
 // Initialize section states
@@ -59,7 +59,17 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     strategyState: 'HUNTING',   // 'HUNTING' | 'SIGNAL_ACTIVE' | 'WAITING_FOR_TREND_BREAK' | 'READY_FOR_LIVE'
     lastNotifiedPeriod: 0,
     disabled: false,
-    virtualLossCount: 0
+    virtualLossCount: 0,
+    recoveryAttempt: 0,          // 0 = fresh, 1/2/3 = recovery attempts used (RECOVERY_3_CHANCE)
+    // Anti-Martingale state
+    amConsecutiveWins: 0,
+    amCurrentBet: 10,
+    amTotalPNL: 0,
+    amStopped: false,
+    amStopReason: '',
+    // Streak 5 Continue state
+    streak5Level: 0,
+    streak5TotalPNL: 0
   };
 }
 
@@ -84,18 +94,43 @@ function isAlternating(colors) {
   return true;
 }
 
+// ============ ANTI-MARTINGALE CONFIG ============
+const AM_CONFIG = {
+  BET_LADDER: [10, 20, 40, 50],
+  STOP_LOSS: -60,
+  TAKE_PROFIT: 200,
+  STARTING_CAPITAL: 150,
+  ALLOWED_SECTIONS: ['B', 'E'],
+  WIN_MULTIPLIER: 0.96
+};
+
+// ============ STREAK 5 CONTINUE CONFIG ============
+const STREAK5_CONFIG = {
+  STREAK_LENGTH: 5,
+  BET_LADDER: [10, 20, 40, 80],
+  ALLOWED_SECTIONS: ['B', 'E'],
+  WIN_MULTIPLIER: 0.96
+};
+
+function getAMBetAmount(consecutiveWins) {
+  const idx = Math.min(consecutiveWins, AM_CONFIG.BET_LADDER.length - 1);
+  return AM_CONFIG.BET_LADDER[idx];
+}
+
 /** Get opposite color */
 function opposite(c) {
   return c === 'G' ? 'R' : 'G';
 }
 
 function getStrategyPatternLength(strategy) {
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
     return 4;
   } else if (strategy === 'BREAK_OPPOSITE' || strategy === 'STREAK_BREAK_3') {
     return 3;
   } else if (strategy === 'CONTRARIAN_DOUBLE') {
     return 2;
+  } else if (strategy === 'STREAK_5_CONTINUE') {
+    return 5;
   }
   return 4;
 }
@@ -438,7 +473,7 @@ function sectionHasLiveAlternatingPattern(section) {
     .slice(-len)
     .map(period => getColor(period));
 
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
     return isAlternating(colors);
   } else if (strategy === 'CONTRARIAN_DOUBLE') {
     return colors[0] === colors[1];
@@ -446,6 +481,8 @@ function sectionHasLiveAlternatingPattern(section) {
     return colors[0] !== colors[1] && colors[1] === colors[2];
   } else if (strategy === 'STREAK_BREAK_3') {
     return colors[0] === colors[1] && colors[1] === colors[2];
+  } else if (strategy === 'STREAK_5_CONTINUE') {
+    return colors.every(c => c === colors[0]);
   }
   return false;
 }
@@ -512,6 +549,7 @@ function showTradeSignal(key) {
 
   const betColor = colorName(section.pendingBet.color);
   const periodStr = formatPeriod(section.pendingBet.period);
+  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
 
   // Show signal banner at top
   showSignalBanner(key);
@@ -519,11 +557,20 @@ function showTradeSignal(key) {
   // Play the trade ready sound (no popup)
   playTradeReadySound();
 
-  // Send push notification
-  sendSystemNotification(
-    `🎯 TRADE: ${section.name}`,
-    `Bet ${betColor} on Period #${periodStr}!`
-  );
+  // Send push notification with recovery info
+  let notifTitle = `🎯 TRADE: ${section.name}`;
+  let notifBody = `Bet ${betColor} on Period #${periodStr}!`;
+  if (strategy === 'RECOVERY_3_CHANCE') {
+    const attemptNum = section.recoveryAttempt + 1;
+    const attemptLabel = attemptNum === 1 ? 'Signal #1' : attemptNum === 2 ? 'Recovery #2' : 'LAST Chance #3';
+    notifTitle = `🎯 ${attemptLabel}: ${section.name}`;
+    notifBody = `Bet ${betColor} on Period #${periodStr}! (Attempt ${attemptNum}/3)`;
+  } else if (strategy === 'STREAK_5_CONTINUE') {
+    const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level || 0];
+    notifTitle = `🔥 5-Streak: ${section.name}`;
+    notifBody = `Bet ${betColor} ₹${betAmt} (Lv${(section.streak5Level || 0) + 1}) on #${periodStr}!`;
+  }
+  sendSystemNotification(notifTitle, notifBody);
 
   addLog(
     `🚨 [${section.name}] TRADE SIGNAL! Bet ${betColor} on #${periodStr}`,
@@ -534,15 +581,18 @@ function showTradeSignal(key) {
 function armBetFromCurrentPattern(key, nextPeriod) {
   const section = state.sections[key];
   if (section.disabled) return false;
+  const strategy = state.selectedStrategy || 'ANTI_MARTINGALE_SELECT';
+  if (strategy === 'ANTI_MARTINGALE_SELECT' && !AM_CONFIG.ALLOWED_SECTIONS.includes(key)) return false;
+  if (strategy === 'ANTI_MARTINGALE_SELECT' && section.amStopped) return false;
+  if (strategy === 'STREAK_5_CONTINUE' && !STREAK5_CONFIG.ALLOWED_SECTIONS.includes(key)) return false;
   if (section.pendingBet || (section.strategyState !== 'HUNTING' && section.strategyState !== 'READY_FOR_LIVE')) return false;
 
   checkCurrentPattern(section);
   if (!section.patternDetected || !section.patternColors) return false;
 
-  const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   let betColor = null;
 
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
     betColor = section.patternColors[section.patternColors.length - 1];
   } else if (strategy === 'CONTRARIAN_DOUBLE') {
     betColor = opposite(section.patternColors[section.patternColors.length - 1]);
@@ -550,6 +600,8 @@ function armBetFromCurrentPattern(key, nextPeriod) {
     betColor = opposite(section.patternColors[section.patternColors.length - 1]);
   } else if (strategy === 'STREAK_BREAK_3') {
     betColor = opposite(section.patternColors[section.patternColors.length - 1]);
+  } else if (strategy === 'STREAK_5_CONTINUE') {
+    betColor = section.patternColors[section.patternColors.length - 1];
   }
 
   if (strategy === 'SNIPER_3_LOSS_RGRG') {
@@ -570,14 +622,34 @@ function armBetFromCurrentPattern(key, nextPeriod) {
         'info'
       );
     }
+  } else if (strategy === 'RECOVERY_3_CHANCE') {
+    // Recovery 3-Chance: ALL bets are LIVE, max 3 per trend cycle
+    const attemptNum = section.recoveryAttempt + 1; // 1st, 2nd, or 3rd attempt
+    const attemptLabel = attemptNum === 1 ? '🎯 Signal #1' : attemptNum === 2 ? '🔄 Recovery #2' : '⚠️ LAST Chance #3';
+    section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: false };
+    section.strategyState = 'SIGNAL_ACTIVE';
+    showTradeSignal(key);
+    addLog(
+      `${attemptLabel} [${section.name}] Pattern ${section.patternColors.join('')} → LIVE Bet ${colorName(betColor)} on #${formatPeriod(nextPeriod)} (Attempt ${attemptNum}/3)`,
+      'signal'
+    );
+  } else if (strategy === 'STREAK_5_CONTINUE') {
+    const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level];
+    section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: false, streak5BetAmount: betAmt };
+    section.strategyState = 'SIGNAL_ACTIVE';
+    showTradeSignal(key);
+    addLog(
+      `🔥 [${section.name}] 5-Streak! ${section.patternColors.join('')} → Bet ${colorName(betColor)} ₹${betAmt} (Lv${section.streak5Level + 1}) on #${formatPeriod(nextPeriod)}`,
+      'signal'
+    );
   } else {
     // Standard direct live bet
     section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: false };
     section.strategyState = 'SIGNAL_ACTIVE';
     showTradeSignal(key);
     addLog(
-      `${section.emoji} [${section.name}] Pattern ${section.patternColors.join('→')} → LIVE Bet ${colorName(betColor)} on #${formatPeriod(nextPeriod)}`,
-      'pattern'
+      `🎯 [${section.name}] Pattern ${section.patternColors.join('')} → LIVE Bet ${colorName(betColor)} on #${formatPeriod(nextPeriod)}`,
+      'signal'
     );
   }
 
@@ -639,6 +711,7 @@ function scanHistoryForSection(section) {
   section.pendingBet = null;
   section.strategyState = 'HUNTING';
   section.virtualLossCount = 0;
+  section.recoveryAttempt = 0;
 
   if (periods.length === 0) {
     checkCurrentPattern(section);
@@ -649,6 +722,7 @@ function scanHistoryForSection(section) {
   const len = getStrategyPatternLength(strategy);
   let activeBet = null; // { color, period, isVirtual }
   let virtualLossCount = 0;
+  let recoveryAttempt = 0;
 
   for (let i = 0; i < periods.length; i++) {
     // Resolve active bet
@@ -681,10 +755,56 @@ function scanHistoryForSection(section) {
         if (won) {
           section.totalWins++;
           section.strategyState = 'HUNTING';
+          if (strategy === 'ANTI_MARTINGALE_SELECT') {
+            section.amConsecutiveWins++;
+            const betAmt = activeBet.amBetAmount || getAMBetAmount(Math.max(0, section.amConsecutiveWins - 1));
+            section.amTotalPNL += betAmt * AM_CONFIG.WIN_MULTIPLIER;
+            section.amCurrentBet = getAMBetAmount(section.amConsecutiveWins);
+            if (section.amTotalPNL >= AM_CONFIG.TAKE_PROFIT) {
+              section.amStopped = true;
+              section.amStopReason = 'TAKE_PROFIT';
+            }
+          }
+          if (strategy === 'RECOVERY_3_CHANCE') {
+            recoveryAttempt = 0;
+          }
+          if (strategy === 'STREAK_5_CONTINUE') {
+            const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level];
+            section.streak5TotalPNL += betAmt * STREAK5_CONFIG.WIN_MULTIPLIER;
+            section.streak5Level = 0;
+          }
         } else {
           section.totalLosses++;
-          if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+          if (strategy === 'ANTI_MARTINGALE_SELECT') {
+            const betAmt = activeBet.amBetAmount || getAMBetAmount(section.amConsecutiveWins);
+            section.amTotalPNL -= betAmt;
+            section.amConsecutiveWins = 0;
+            section.amCurrentBet = AM_CONFIG.BET_LADDER[0];
+            if (section.amTotalPNL <= AM_CONFIG.STOP_LOSS) {
+              section.amStopped = true;
+              section.amStopReason = 'STOP_LOSS';
+            }
+          }
+          if (strategy === 'STREAK_5_CONTINUE') {
+            const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level];
+            section.streak5TotalPNL -= betAmt;
+            section.streak5Level++;
+            if (section.streak5Level >= STREAK5_CONFIG.BET_LADDER.length) {
+              section.streak5Level = 0;
+            }
+          }
+          if (strategy === 'RECOVERY_3_CHANCE') {
+            recoveryAttempt++;
+            if (recoveryAttempt >= 3) {
+              section.strategyState = 'WAITING_FOR_TREND_BREAK';
+              recoveryAttempt = 0;
+            } else {
+              section.strategyState = 'HUNTING'; // Keep hunting in same trend
+            }
+          } else if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
             section.strategyState = 'WAITING_FOR_TREND_BREAK';
+          } else if (strategy === 'ANTI_MARTINGALE_SELECT') {
+            section.strategyState = 'HUNTING';
           } else {
             section.strategyState = 'HUNTING';
           }
@@ -702,6 +822,7 @@ function scanHistoryForSection(section) {
       if (i > 0 && getColor(periods[i - 1]) === getColor(periods[i])) {
         section.strategyState = 'HUNTING';
         virtualLossCount = 0;
+        recoveryAttempt = 0;
       }
     }
 
@@ -717,7 +838,7 @@ function scanHistoryForSection(section) {
     let patternDetected = false;
     let betColor = null;
 
-    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
       if (isAlternating(patternColors)) {
         patternDetected = true;
         betColor = patternColors[patternColors.length - 1];
@@ -737,6 +858,11 @@ function scanHistoryForSection(section) {
         patternDetected = true;
         betColor = opposite(patternColors[2]);
       }
+    } else if (strategy === 'STREAK_5_CONTINUE') {
+      if (patternColors.every(c => c === patternColors[0])) {
+        patternDetected = true;
+        betColor = patternColors[patternColors.length - 1];
+      }
     }
 
     if (!patternDetected) continue;
@@ -744,13 +870,20 @@ function scanHistoryForSection(section) {
 
     const nextPeriod = periods[i + 1].period;
 
-    if (strategy === 'SNIPER_3_LOSS_RGRG') {
+    if (strategy === 'ANTI_MARTINGALE_SELECT') {
+      activeBet = { color: betColor, period: nextPeriod, isVirtual: false };
+      section.strategyState = 'SIGNAL_ACTIVE';
+    } else if (strategy === 'SNIPER_3_LOSS_RGRG') {
       if (section.strategyState === 'READY_FOR_LIVE') {
         activeBet = { color: betColor, period: nextPeriod, isVirtual: false };
         section.strategyState = 'SIGNAL_ACTIVE';
       } else {
         activeBet = { color: betColor, period: nextPeriod, isVirtual: true };
       }
+    } else if (strategy === 'RECOVERY_3_CHANCE') {
+      // Recovery: ALL bets are LIVE
+      activeBet = { color: betColor, period: nextPeriod, isVirtual: false };
+      section.strategyState = 'SIGNAL_ACTIVE';
     } else {
       activeBet = { color: betColor, period: nextPeriod, isVirtual: false };
       section.strategyState = 'SIGNAL_ACTIVE';
@@ -758,6 +891,7 @@ function scanHistoryForSection(section) {
   }
 
   section.virtualLossCount = virtualLossCount;
+  section.recoveryAttempt = recoveryAttempt;
 
   // Check for current pattern (latest colors)
   checkCurrentPattern(section);
@@ -780,7 +914,7 @@ function checkCurrentPattern(section) {
 
   if (section.freshStartArmed) {
     let currentIsPattern = false;
-    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
       currentIsPattern = isAlternating(latestColors);
     } else if (strategy === 'CONTRARIAN_DOUBLE') {
       currentIsPattern = latestColors[0] === latestColors[1];
@@ -788,6 +922,8 @@ function checkCurrentPattern(section) {
       currentIsPattern = latestColors[0] !== latestColors[1] && latestColors[1] === latestColors[2];
     } else if (strategy === 'STREAK_BREAK_3') {
       currentIsPattern = latestColors[0] === latestColors[1] && latestColors[1] === latestColors[2];
+    } else if (strategy === 'STREAK_5_CONTINUE') {
+      currentIsPattern = latestColors.every(c => c === latestColors[0]);
     }
 
     if (currentIsPattern) {
@@ -813,7 +949,7 @@ function checkCurrentPattern(section) {
 
   const sliceColors = periods.slice(-len).map(p => getColor(p));
   let isPattern = false;
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
     isPattern = isAlternating(sliceColors);
   } else if (strategy === 'CONTRARIAN_DOUBLE') {
     isPattern = sliceColors[0] === sliceColors[1];
@@ -821,6 +957,8 @@ function checkCurrentPattern(section) {
     isPattern = sliceColors[0] !== sliceColors[1] && sliceColors[1] === sliceColors[2];
   } else if (strategy === 'STREAK_BREAK_3') {
     isPattern = sliceColors[0] === sliceColors[1] && sliceColors[1] === sliceColors[2];
+  } else if (strategy === 'STREAK_5_CONTINUE') {
+    isPattern = sliceColors.every(c => c === sliceColors[0]);
   }
 
   if (isPattern) {
@@ -925,17 +1063,58 @@ function processNewData(key, apiData) {
           playAlertSound();
           showToast(`✅ ${section.name} WIN!`, 'success');
           section.strategyState = 'HUNTING';
+          if (strategy === 'RECOVERY_3_CHANCE') {
+            section.recoveryAttempt = 0;
+          }
+          if (strategy === 'STREAK_5_CONTINUE') {
+            const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level];
+            section.streak5TotalPNL += betAmt * STREAK5_CONFIG.WIN_MULTIPLIER;
+            section.streak5Level = 0;
+            addLog(`💰 [${section.name}] Streak5 PNL: ₹${section.streak5TotalPNL.toFixed(1)} | Reset to Lv1`, 'info');
+          }
         } else {
           section.totalLosses++;
-          addLog(
-            `❌ [${section.name}] LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}.`,
-            'loss'
-          );
           hideSignalBanner();
-          if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+          if (strategy === 'RECOVERY_3_CHANCE') {
+            section.recoveryAttempt++;
+            const attemptNum = section.recoveryAttempt;
+            if (attemptNum >= 3) {
+              addLog(
+                `❌ [${section.name}] LOSS #3! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}. 3 chances used — Cooling down.`,
+                'loss'
+              );
+              section.strategyState = 'WAITING_FOR_TREND_BREAK';
+              section.recoveryAttempt = 0;
+            } else {
+              addLog(
+                `❌ [${section.name}] LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}. Recovery ${attemptNum}/3 — Hunting next pattern in same trend.`,
+                'loss'
+              );
+              section.strategyState = 'HUNTING'; // Keep hunting in same trend
+            }
+          } else if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
+            addLog(
+              `❌ [${section.name}] LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}.`,
+              'loss'
+            );
             section.strategyState = 'WAITING_FOR_TREND_BREAK';
           } else {
+            addLog(
+              `❌ [${section.name}] LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}.`,
+              'loss'
+            );
             section.strategyState = 'HUNTING';
+          }
+          if (strategy === 'STREAK_5_CONTINUE') {
+            const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level];
+            section.streak5TotalPNL -= betAmt;
+            section.streak5Level++;
+            if (section.streak5Level >= STREAK5_CONFIG.BET_LADDER.length) {
+              section.streak5Level = 0;
+              addLog(`💀 [${section.name}] 4 consecutive losses! -₹150 cycle. Reset to Lv1`, 'loss');
+            } else {
+              addLog(`💰 [${section.name}] Streak5 PNL: ₹${section.streak5TotalPNL.toFixed(1)} | Next: Lv${section.streak5Level + 1} (₹${STREAK5_CONFIG.BET_LADDER[section.streak5Level]})`, 'info');
+            }
           }
         }
         section.virtualLossCount = 0;
@@ -953,6 +1132,7 @@ function processNewData(key, apiData) {
   if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
     if (hasLatestTrendBreak(section.periods)) {
       section.strategyState = 'HUNTING';
+      section.recoveryAttempt = 0;
       addLog(`🔄 [${section.name}] Trend ended (consecutive same colors). Re-armed and hunting.`, 'info');
     }
   }
@@ -977,6 +1157,7 @@ function resetAllSections() {
     section.freshStartArmed = false;
     section.freshStartAnchorPeriod = 0;
     section.strategyState = 'HUNTING';
+    section.recoveryAttempt = 0;
   }
 
   persistFreshSignalState();
@@ -999,6 +1180,7 @@ function startFreshSignalsNow() {
     section.freshStartAnchorPeriod = anchorPeriod;
     section.strategyState = 'HUNTING';
     section.virtualLossCount = 0;
+    section.recoveryAttempt = 0;
   }
 
   hideSignalBanner();
@@ -1061,6 +1243,7 @@ function toggleSection(key, isChecked) {
     section.patternColors = null;
     section.strategyState = 'HUNTING';
     section.virtualLossCount = 0;
+    section.recoveryAttempt = 0;
     hideSignalBanner();
   } else {
     // Re-run scan history to get current status
@@ -1129,17 +1312,25 @@ function renderSection(key) {
   document.getElementById(`losses-${key}`).textContent = `L: ${section.totalLosses}`;
   
   // Strategy state label — simple: Hunting or LIVE
+  const currentStrategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   let stateLabel = '🔍 Hunting';
   if (section.disabled) {
     stateLabel = '⏸️ Paused';
   } else if (section.strategyState === 'SIGNAL_ACTIVE') {
-    stateLabel = '🎯 LIVE Signal';
+    if (currentStrategy === 'RECOVERY_3_CHANCE') {
+      const attemptNum = section.recoveryAttempt + 1;
+      stateLabel = attemptNum === 1 ? '🎯 Signal #1' : attemptNum === 2 ? '🔄 Recovery #2' : '⚠️ LAST #3';
+    } else {
+      stateLabel = '🎯 LIVE Signal';
+    }
   } else if (section.strategyState === 'READY_FOR_LIVE') {
     stateLabel = '🎯 Armed';
   } else if (section.strategyState === 'WAITING_FOR_TREND_BREAK') {
-    stateLabel = '⏳ Wait Trend';
+    stateLabel = currentStrategy === 'RECOVERY_3_CHANCE' ? '❄️ Cooldown' : '⏳ Wait Trend';
   } else if (section.patternDetected) {
     stateLabel = '📊 Pattern Found';
+  } else if (currentStrategy === 'RECOVERY_3_CHANCE' && section.recoveryAttempt > 0) {
+    stateLabel = `🔄 Recovery ${section.recoveryAttempt}/3`;
   } else if (section.virtualLossCount > 0) {
     stateLabel = `🔍 V-Loss: ${section.virtualLossCount}/3`;
   }
@@ -1264,48 +1455,96 @@ function renderSniperTracker(key) {
 
   const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
 
-  // Only show for Sniper strategy
-  if (strategy !== 'SNIPER_3_LOSS_RGRG' || section.disabled) {
+  // Show for Sniper and Recovery strategies
+  if ((strategy !== 'SNIPER_3_LOSS_RGRG' && strategy !== 'RECOVERY_3_CHANCE') || section.disabled) {
     tracker.style.display = 'none';
     return;
   }
 
   tracker.style.display = '';
 
-  const count = section.virtualLossCount || 0;
+  const labelEl = tracker.querySelector('.sniper-label');
   const countEl = document.getElementById(`sniper-count-${key}`);
-  const isReady = section.strategyState === 'READY_FOR_LIVE';
-  const isLive = section.strategyState === 'SIGNAL_ACTIVE' && section.pendingBet && !section.pendingBet.isVirtual;
 
-  // Update dots
-  for (let i = 1; i <= 3; i++) {
-    const dot = document.getElementById(`sniper-dot-${key}-${i}`);
-    if (!dot) continue;
+  if (strategy === 'RECOVERY_3_CHANCE') {
+    // Recovery 3-Chance mode
+    if (labelEl) labelEl.textContent = 'Recovery:';
+    const count = section.recoveryAttempt || 0;
+    const isLive = section.strategyState === 'SIGNAL_ACTIVE' && section.pendingBet && !section.pendingBet.isVirtual;
+    const isCooldown = section.strategyState === 'WAITING_FOR_TREND_BREAK';
 
-    dot.classList.remove('filled', 'ready');
-    if (i <= count) {
-      dot.classList.add('filled');
+    // Update dots — show recovery attempts used
+    for (let i = 1; i <= 3; i++) {
+      const dot = document.getElementById(`sniper-dot-${key}-${i}`);
+      if (!dot) continue;
+
+      dot.classList.remove('filled', 'ready');
+      if (i <= count) {
+        dot.classList.add('filled');
+      }
+      if (count >= 2 || isLive) {
+        dot.classList.add('ready');
+      }
     }
-    if (count >= 3 || isReady || isLive) {
-      dot.classList.add('ready');
-    }
-  }
 
-  // Update count text
-  if (isLive) {
-    countEl.textContent = '🎯 LIVE!';
-    countEl.className = 'sniper-count sniper-live';
-    tracker.classList.add('tracker-live');
-    tracker.classList.remove('tracker-ready');
-  } else if (isReady || count >= 3) {
-    countEl.textContent = '✅ READY!';
-    countEl.className = 'sniper-count sniper-ready';
-    tracker.classList.add('tracker-ready');
-    tracker.classList.remove('tracker-live');
+    // Update count text
+    if (isCooldown) {
+      countEl.textContent = '❄️ Cooldown';
+      countEl.className = 'sniper-count';
+      tracker.classList.remove('tracker-ready', 'tracker-live');
+    } else if (isLive) {
+      const attemptNum = count + 1;
+      const label = attemptNum === 1 ? '🎯 #1' : attemptNum === 2 ? '🔄 #2' : '⚠️ LAST!';
+      countEl.textContent = label;
+      countEl.className = attemptNum >= 3 ? 'sniper-count sniper-live' : 'sniper-count sniper-ready';
+      tracker.classList.add(attemptNum >= 3 ? 'tracker-live' : 'tracker-ready');
+      tracker.classList.remove(attemptNum >= 3 ? 'tracker-ready' : 'tracker-live');
+    } else if (count > 0) {
+      countEl.textContent = `${count}/3 used`;
+      countEl.className = 'sniper-count';
+      tracker.classList.remove('tracker-ready', 'tracker-live');
+    } else {
+      countEl.textContent = '0/3';
+      countEl.className = 'sniper-count';
+      tracker.classList.remove('tracker-ready', 'tracker-live');
+    }
   } else {
-    countEl.textContent = `${count}/3`;
-    countEl.className = 'sniper-count';
-    tracker.classList.remove('tracker-ready', 'tracker-live');
+    // Original Sniper mode
+    if (labelEl) labelEl.textContent = 'Sniper Loss:';
+    const count = section.virtualLossCount || 0;
+    const isReady = section.strategyState === 'READY_FOR_LIVE';
+    const isLive = section.strategyState === 'SIGNAL_ACTIVE' && section.pendingBet && !section.pendingBet.isVirtual;
+
+    // Update dots
+    for (let i = 1; i <= 3; i++) {
+      const dot = document.getElementById(`sniper-dot-${key}-${i}`);
+      if (!dot) continue;
+
+      dot.classList.remove('filled', 'ready');
+      if (i <= count) {
+        dot.classList.add('filled');
+      }
+      if (count >= 3 || isReady || isLive) {
+        dot.classList.add('ready');
+      }
+    }
+
+    // Update count text
+    if (isLive) {
+      countEl.textContent = '🎯 LIVE!';
+      countEl.className = 'sniper-count sniper-live';
+      tracker.classList.add('tracker-live');
+      tracker.classList.remove('tracker-ready');
+    } else if (isReady || count >= 3) {
+      countEl.textContent = '✅ READY!';
+      countEl.className = 'sniper-count sniper-ready';
+      tracker.classList.add('tracker-ready');
+      tracker.classList.remove('tracker-live');
+    } else {
+      countEl.textContent = `${count}/3`;
+      countEl.className = 'sniper-count';
+      tracker.classList.remove('tracker-ready', 'tracker-live');
+    }
   }
 }
 
@@ -1526,8 +1765,18 @@ function renderTradeBanner(key) {
     const betColorLabel = colorName(betColor);
     const periodStr = formatPeriod(section.pendingBet.period);
     const isGreen = betColor === 'G';
+    const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
 
-    colorEl.textContent = `🎯 ${betColorLabel} pe lagao!`;
+    if (strategy === 'RECOVERY_3_CHANCE') {
+      const attemptNum = section.recoveryAttempt + 1;
+      const attemptLabel = attemptNum === 1 ? '🎯' : attemptNum === 2 ? '🔄 Recovery #2 —' : '⚠️ LAST CHANCE —';
+      colorEl.textContent = `${attemptLabel} ${betColorLabel} pe lagao!`;
+    } else if (strategy === 'STREAK_5_CONTINUE') {
+      const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level || 0];
+      colorEl.textContent = `🔥 ${betColorLabel} pe lagao! (₹${betAmt} Lv${(section.streak5Level || 0) + 1})`;
+    } else {
+      colorEl.textContent = `🎯 ${betColorLabel} pe lagao!`;
+    }
     colorEl.className = `trade-banner-color ${isGreen ? 'banner-green' : 'banner-red'}`;
     periodEl.textContent = `Period #${periodStr}`;
 
