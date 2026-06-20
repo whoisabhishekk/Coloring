@@ -839,14 +839,14 @@ function resolveRgrgBet(key, period) {
     resetRgrgCycle();
   } else {
     section.totalLosses++;
-    section.strategyState = 'HUNTING';
+    section.strategyState = 'WAITING_FOR_TREND_BREAK';
     section.virtualLossCount = 3;
     section.lockLossCount = 3;
     addLog(
-      `❌ [${section.name}] LIVE LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}. Same section locked; waiting for next RGRG pattern.`,
+      `❌ [${section.name}] LIVE LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}. Waiting for alternating trend to end before next pattern.`,
       'loss'
     );
-    showToast(`❌ ${section.name} loss. Waiting for next pattern.`, 'error');
+    showToast(`❌ ${section.name} loss. Waiting for trend break.`, 'error');
     persistRgrgLockState();
   }
 
@@ -1007,7 +1007,7 @@ function scanHistoryForSection(section) {
             section.strategyState = 'HUNTING';
           } else if (strategy === 'RGRG_LOCK_RESET') {
             virtualLossCount = 3;
-            section.strategyState = 'HUNTING';
+            section.strategyState = 'WAITING_FOR_TREND_BREAK';
           } else {
             section.strategyState = 'HUNTING';
           }
@@ -1376,6 +1376,11 @@ function processNewData(key, apiData) {
     if (hasLatestTrendBreak(section.periods)) {
       section.strategyState = 'HUNTING';
       section.recoveryAttempt = 0;
+      if (strategy === 'RGRG_LOCK_RESET') {
+        section.virtualLossCount = 0;
+        section.lockLossCount = 0;
+        persistRgrgLockState();
+      }
       addLog(`🔄 [${section.name}] Trend ended (consecutive same colors). Re-armed and hunting.`, 'info');
     }
   }
