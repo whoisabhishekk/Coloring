@@ -8,6 +8,7 @@ const CONFIG = {
   // Local proxy handles CORS — requests go to /api/win/... → proxied to cooe02.in
   API_BASE: '/api',
   FRESH_SIGNAL_STORAGE_KEY: 'wingo-fresh-signal-state',
+  RGRG_LOCK_STORAGE_KEY: 'wingo-rgrg-locked-sections',
   SAAS_ID: 1,
   REFRESH_INTERVAL: 10000,       // 10 seconds (safety-net background poll)
   PERIOD_DURATION_MS: 180000,    // 3 minutes = 180 seconds per color period
@@ -37,7 +38,7 @@ const state = {
   boundaryFollowUp2: null,   // Follow-up fetch 8s after boundary
   countdownInterval: null,   // setInterval for live countdown display
   lastBoundaryFetch: 0,      // Timestamp of last boundary-triggered fetch
-  selectedStrategy: localStorage.getItem('wingo-selected-strategy') || 'ANTI_MARTINGALE_SELECT'
+  selectedStrategy: localStorage.getItem('wingo-selected-strategy') || 'RGRG_LOCK_RESET'
 };
 
 // Initialize section states
@@ -61,6 +62,9 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     disabled: false,
     virtualLossCount: 0,
     recoveryAttempt: 0,          // 0 = fresh, 1/2/3 = recovery attempts used (RECOVERY_3_CHANCE)
+    // RGRG Lock Reset state
+    lockLossCount: 0,
+    rgrgLocked: false,
     // Anti-Martingale state
     amConsecutiveWins: 0,
     amCurrentBet: 10,
@@ -123,7 +127,7 @@ function opposite(c) {
 }
 
 function getStrategyPatternLength(strategy) {
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT' || strategy === 'RGRG_LOCK_RESET') {
     return 4;
   } else if (strategy === 'BREAK_OPPOSITE' || strategy === 'STREAK_BREAK_3') {
     return 3;
@@ -186,6 +190,72 @@ function removeStorage(key) {
     window.localStorage.removeItem(key);
   } catch (e) {
     // Ignore storage failures in restricted browsers.
+  }
+}
+
+function isRgrgLockStrategy(strategy = state.selectedStrategy) {
+  return strategy === 'RGRG_LOCK_RESET';
+}
+
+function isRgrgSectionLocked(section, strategy = state.selectedStrategy) {
+  return isRgrgLockStrategy(strategy) && section.rgrgLocked;
+}
+
+function clearRgrgSectionLock(section) {
+  section.lockLossCount = 0;
+  section.rgrgLocked = false;
+}
+
+function lockRgrgSection(section) {
+  section.lockLossCount = 3;
+  section.rgrgLocked = true;
+  section.pendingBet = null;
+  section.patternDetected = false;
+  section.patternColors = null;
+  section.strategyState = 'HUNTING';
+}
+
+function persistRgrgLockState() {
+  const sections = {};
+  let hasLockedSection = false;
+
+  for (const [key, section] of Object.entries(state.sections)) {
+    if (!section.rgrgLocked) continue;
+
+    hasLockedSection = true;
+    sections[key] = {
+      lockLossCount: section.lockLossCount || 3
+    };
+  }
+
+  if (!hasLockedSection) {
+    removeStorage(CONFIG.RGRG_LOCK_STORAGE_KEY);
+    return;
+  }
+
+  writeStorage(
+    CONFIG.RGRG_LOCK_STORAGE_KEY,
+    JSON.stringify({ sections })
+  );
+}
+
+function restoreRgrgLockState() {
+  const raw = readStorage(CONFIG.RGRG_LOCK_STORAGE_KEY);
+  if (!raw) return;
+
+  try {
+    const parsed = JSON.parse(raw);
+    const savedSections = parsed.sections || {};
+
+    for (const [key, saved] of Object.entries(savedSections)) {
+      const section = state.sections[key];
+      if (!section) continue;
+
+      section.rgrgLocked = true;
+      section.lockLossCount = Math.max(3, Number(saved.lockLossCount) || 3);
+    }
+  } catch (e) {
+    removeStorage(CONFIG.RGRG_LOCK_STORAGE_KEY);
   }
 }
 
@@ -473,7 +543,7 @@ function sectionHasLiveAlternatingPattern(section) {
     .slice(-len)
     .map(period => getColor(period));
 
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT' || strategy === 'RGRG_LOCK_RESET') {
     return isAlternating(colors);
   } else if (strategy === 'CONTRARIAN_DOUBLE') {
     return colors[0] === colors[1];
@@ -580,8 +650,8 @@ function showTradeSignal(key) {
 
 function armBetFromCurrentPattern(key, nextPeriod) {
   const section = state.sections[key];
-  if (section.disabled) return false;
-  const strategy = state.selectedStrategy || 'ANTI_MARTINGALE_SELECT';
+  const strategy = state.selectedStrategy || 'RGRG_LOCK_RESET';
+  if (section.disabled || isRgrgSectionLocked(section, strategy)) return false;
   if (strategy === 'ANTI_MARTINGALE_SELECT' && !AM_CONFIG.ALLOWED_SECTIONS.includes(key)) return false;
   if (strategy === 'ANTI_MARTINGALE_SELECT' && section.amStopped) return false;
   if (strategy === 'STREAK_5_CONTINUE' && !STREAK5_CONFIG.ALLOWED_SECTIONS.includes(key)) return false;
@@ -592,7 +662,7 @@ function armBetFromCurrentPattern(key, nextPeriod) {
 
   let betColor = null;
 
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT' || strategy === 'RGRG_LOCK_RESET') {
     betColor = section.patternColors[section.patternColors.length - 1];
   } else if (strategy === 'CONTRARIAN_DOUBLE') {
     betColor = opposite(section.patternColors[section.patternColors.length - 1]);
@@ -640,6 +710,15 @@ function armBetFromCurrentPattern(key, nextPeriod) {
     showTradeSignal(key);
     addLog(
       `🔥 [${section.name}] 5-Streak! ${section.patternColors.join('')} → Bet ${colorName(betColor)} ₹${betAmt} (Lv${section.streak5Level + 1}) on #${formatPeriod(nextPeriod)}`,
+      'signal'
+    );
+  } else if (strategy === 'RGRG_LOCK_RESET') {
+    // RGRG Lock Reset: LIVE bet, track losses per section
+    section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: false };
+    section.strategyState = 'SIGNAL_ACTIVE';
+    showTradeSignal(key);
+    addLog(
+      `🎯 [${section.name}] RGRG Pattern ${section.patternColors.join('')} → Bet ${colorName(betColor)} on #${formatPeriod(nextPeriod)} (Losses: ${section.lockLossCount}/3)`,
       'signal'
     );
   } else {
@@ -712,6 +791,8 @@ function scanHistoryForSection(section) {
   section.strategyState = 'HUNTING';
   section.virtualLossCount = 0;
   section.recoveryAttempt = 0;
+  section.lockLossCount = 0;
+  section.rgrgLocked = false;
 
   if (periods.length === 0) {
     checkCurrentPattern(section);
@@ -755,6 +836,9 @@ function scanHistoryForSection(section) {
         if (won) {
           section.totalWins++;
           section.strategyState = 'HUNTING';
+          if (strategy === 'RGRG_LOCK_RESET') {
+            section.lockLossCount = 0;
+          }
           if (strategy === 'ANTI_MARTINGALE_SELECT') {
             section.amConsecutiveWins++;
             const betAmt = activeBet.amBetAmount || getAMBetAmount(Math.max(0, section.amConsecutiveWins - 1));
@@ -805,6 +889,13 @@ function scanHistoryForSection(section) {
             section.strategyState = 'WAITING_FOR_TREND_BREAK';
           } else if (strategy === 'ANTI_MARTINGALE_SELECT') {
             section.strategyState = 'HUNTING';
+          } else if (strategy === 'RGRG_LOCK_RESET') {
+            section.lockLossCount++;
+            if (section.lockLossCount >= 3) {
+              lockRgrgSection(section);
+            } else {
+              section.strategyState = 'HUNTING';
+            }
           } else {
             section.strategyState = 'HUNTING';
           }
@@ -838,7 +929,7 @@ function scanHistoryForSection(section) {
     let patternDetected = false;
     let betColor = null;
 
-    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
+    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT' || strategy === 'RGRG_LOCK_RESET') {
       if (isAlternating(patternColors)) {
         patternDetected = true;
         betColor = patternColors[patternColors.length - 1];
@@ -870,7 +961,12 @@ function scanHistoryForSection(section) {
 
     const nextPeriod = periods[i + 1].period;
 
-    if (strategy === 'ANTI_MARTINGALE_SELECT') {
+    if (strategy === 'RGRG_LOCK_RESET') {
+      if (!section.rgrgLocked) {
+        activeBet = { color: betColor, period: nextPeriod, isVirtual: false };
+        section.strategyState = 'SIGNAL_ACTIVE';
+      }
+    } else if (strategy === 'ANTI_MARTINGALE_SELECT') {
       activeBet = { color: betColor, period: nextPeriod, isVirtual: false };
       section.strategyState = 'SIGNAL_ACTIVE';
     } else if (strategy === 'SNIPER_3_LOSS_RGRG') {
@@ -902,6 +998,12 @@ function checkCurrentPattern(section) {
   const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   const len = getStrategyPatternLength(strategy);
 
+  if (isRgrgSectionLocked(section, strategy)) {
+    section.patternDetected = false;
+    section.patternColors = null;
+    return;
+  }
+
   if (allPeriods.length < len) {
     section.patternDetected = false;
     section.patternColors = null;
@@ -914,7 +1016,7 @@ function checkCurrentPattern(section) {
 
   if (section.freshStartArmed) {
     let currentIsPattern = false;
-    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
+    if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT' || strategy === 'RGRG_LOCK_RESET') {
       currentIsPattern = isAlternating(latestColors);
     } else if (strategy === 'CONTRARIAN_DOUBLE') {
       currentIsPattern = latestColors[0] === latestColors[1];
@@ -949,7 +1051,7 @@ function checkCurrentPattern(section) {
 
   const sliceColors = periods.slice(-len).map(p => getColor(p));
   let isPattern = false;
-  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT') {
+  if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG' || strategy === 'RECOVERY_3_CHANCE' || strategy === 'ANTI_MARTINGALE_SELECT' || strategy === 'RGRG_LOCK_RESET') {
     isPattern = isAlternating(sliceColors);
   } else if (strategy === 'CONTRARIAN_DOUBLE') {
     isPattern = sliceColors[0] === sliceColors[1];
@@ -972,11 +1074,19 @@ function checkCurrentPattern(section) {
 
 function processNewData(key, apiData) {
   const section = state.sections[key];
-  if (section.disabled) {
-    // If disabled, just sync periods data silently
+  const activeStrategy = state.selectedStrategy || 'RGRG_LOCK_RESET';
+
+  if (section.disabled || isRgrgSectionLocked(section, activeStrategy)) {
+    // If paused or locked, just sync periods data silently.
     section.periods = apiData.periods || [];
     section.lastKnownPeriod = section.periods[section.periods.length - 1]?.period || 0;
     section.nextPeriod = apiData.next_period;
+    if (isRgrgSectionLocked(section, activeStrategy)) {
+      section.pendingBet = null;
+      section.patternDetected = false;
+      section.patternColors = null;
+      section.strategyState = 'HUNTING';
+    }
     return;
   }
 
@@ -1063,6 +1173,12 @@ function processNewData(key, apiData) {
           playAlertSound();
           showToast(`✅ ${section.name} WIN!`, 'success');
           section.strategyState = 'HUNTING';
+          if (strategy === 'RGRG_LOCK_RESET') {
+            section.lockLossCount = 0;
+            section.rgrgLocked = false;
+            persistRgrgLockState();
+            addLog(`🔓 [${section.name}] WIN! Loss counter reset to 0.`, 'info');
+          }
           if (strategy === 'RECOVERY_3_CHANCE') {
             section.recoveryAttempt = 0;
           }
@@ -1091,6 +1207,24 @@ function processNewData(key, apiData) {
                 'loss'
               );
               section.strategyState = 'HUNTING'; // Keep hunting in same trend
+            }
+          } else if (strategy === 'RGRG_LOCK_RESET') {
+            section.lockLossCount++;
+            if (section.lockLossCount >= 3) {
+              addLog(
+                `🔒 [${section.name}] 3 LOSSES! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}. SECTION LOCKED!`,
+                'loss'
+              );
+              lockRgrgSection(section);
+              persistRgrgLockState();
+              showToast(`🔒 ${section.name} LOCKED after 3 losses!`, 'error');
+              sendSystemNotification(`🔒 ${section.name} LOCKED`, `3 consecutive losses! Section auto-locked.`);
+            } else {
+              addLog(
+                `❌ [${section.name}] LOSS ${section.lockLossCount}/3! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}.`,
+                'loss'
+              );
+              section.strategyState = 'HUNTING';
             }
           } else if (strategy === 'RGRG_TREND_BREAK' || strategy === 'SNIPER_3_LOSS_RGRG') {
             addLog(
@@ -1158,8 +1292,11 @@ function resetAllSections() {
     section.freshStartAnchorPeriod = 0;
     section.strategyState = 'HUNTING';
     section.recoveryAttempt = 0;
+    section.lockLossCount = 0;
+    section.rgrgLocked = false;
   }
 
+  persistRgrgLockState();
   persistFreshSignalState();
 }
 
@@ -1181,9 +1318,12 @@ function startFreshSignalsNow() {
     section.strategyState = 'HUNTING';
     section.virtualLossCount = 0;
     section.recoveryAttempt = 0;
+    section.lockLossCount = 0;
+    section.rgrgLocked = false;
   }
 
   hideSignalBanner();
+  persistRgrgLockState();
   persistFreshSignalState();
   renderAll();
 
@@ -1209,7 +1349,7 @@ function changeStrategy(newStrategy) {
 
   // Recalculate stats for all enabled sections
   for (const [key, section] of Object.entries(state.sections)) {
-    if (!section.disabled) {
+    if (!section.disabled && !isRgrgSectionLocked(section, newStrategy)) {
       scanHistoryForSection(section);
       
       // Arm if hunting/armed
@@ -1225,6 +1365,11 @@ function changeStrategy(newStrategy) {
 function toggleSection(key, isChecked) {
   const section = state.sections[key];
   if (!section) return;
+
+  if (isChecked && section.rgrgLocked) {
+    clearRgrgSectionLock(section);
+    persistRgrgLockState();
+  }
 
   section.disabled = !isChecked;
   
@@ -1266,6 +1411,12 @@ function toggleSection(key, isChecked) {
 
 function renderSection(key) {
   const section = state.sections[key];
+  const currentStrategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
+  const isLocked = isRgrgSectionLocked(section, currentStrategy);
+  const toggleEl = document.getElementById(`toggle-${key}`);
+  if (toggleEl) {
+    toggleEl.checked = !section.disabled && !isLocked;
+  }
 
   // Period info
   const periodEl = document.getElementById(`period-P`.replace('P', key));
@@ -1281,7 +1432,10 @@ function renderSection(key) {
 
   // Pattern status
   const patternEl = document.getElementById(`pattern-${key}`);
-  if (section.disabled) {
+  if (isLocked) {
+    patternEl.textContent = '🔒 Locked (3 Losses)';
+    patternEl.className = 'pattern-status no-pattern';
+  } else if (section.disabled) {
     patternEl.textContent = 'Disabled';
     patternEl.className = 'pattern-status no-pattern';
   } else if (section.patternDetected && section.patternColors) {
@@ -1294,7 +1448,10 @@ function renderSection(key) {
 
   // Bet info
   const betEl = document.getElementById(`bet-${key}`);
-  if (section.disabled) {
+  if (isLocked) {
+    betEl.textContent = 'LOCKED';
+    betEl.className = 'bet-info bet-none';
+  } else if (section.disabled) {
     betEl.textContent = 'PAUSED';
     betEl.className = 'bet-info bet-none';
   } else if (section.pendingBet) {
@@ -1312,9 +1469,10 @@ function renderSection(key) {
   document.getElementById(`losses-${key}`).textContent = `L: ${section.totalLosses}`;
   
   // Strategy state label — simple: Hunting or LIVE
-  const currentStrategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
   let stateLabel = '🔍 Hunting';
-  if (section.disabled) {
+  if (isLocked) {
+    stateLabel = '🔒 LOCKED (3 Loss)';
+  } else if (section.disabled) {
     stateLabel = '⏸️ Paused';
   } else if (section.strategyState === 'SIGNAL_ACTIVE') {
     if (currentStrategy === 'RECOVERY_3_CHANCE') {
@@ -1331,6 +1489,8 @@ function renderSection(key) {
     stateLabel = '📊 Pattern Found';
   } else if (currentStrategy === 'RECOVERY_3_CHANCE' && section.recoveryAttempt > 0) {
     stateLabel = `🔄 Recovery ${section.recoveryAttempt}/3`;
+  } else if (currentStrategy === 'RGRG_LOCK_RESET' && section.lockLossCount > 0) {
+    stateLabel = `❌ Loss: ${section.lockLossCount}/3`;
   } else if (section.virtualLossCount > 0) {
     stateLabel = `🔍 V-Loss: ${section.virtualLossCount}/3`;
   }
@@ -1338,7 +1498,10 @@ function renderSection(key) {
 
   // Section status badge
   const statusEl = document.getElementById(`status-${key}`);
-  if (section.disabled) {
+  if (isLocked) {
+    statusEl.textContent = '🔒 LOCKED';
+    statusEl.className = 'section-status status-locked';
+  } else if (section.disabled) {
     statusEl.textContent = 'PAUSED';
     statusEl.className = 'section-status status-paused';
   } else if (section.pendingBet) {
@@ -1362,7 +1525,7 @@ function renderSection(key) {
   const cardEl = document.getElementById(`card-${key}`);
   cardEl.classList.remove('active', 'signal-triggered', 'signal-green', 'signal-red', 'paused', 'hunting');
 
-  if (section.disabled) {
+  if (section.disabled || isLocked) {
     cardEl.classList.add('paused');
   } else if (section.pendingBet && !section.pendingBet.isVirtual) {
     cardEl.classList.add('signal-triggered');
@@ -1454,9 +1617,10 @@ function renderSniperTracker(key) {
   if (!tracker) return;
 
   const strategy = state.selectedStrategy || 'SNIPER_3_LOSS_RGRG';
+  const isLocked = isRgrgSectionLocked(section, strategy);
 
-  // Show for Sniper and Recovery strategies
-  if ((strategy !== 'SNIPER_3_LOSS_RGRG' && strategy !== 'RECOVERY_3_CHANCE') || section.disabled) {
+  // Show for Sniper, Recovery, and RGRG Lock Reset strategies
+  if ((strategy !== 'SNIPER_3_LOSS_RGRG' && strategy !== 'RECOVERY_3_CHANCE' && strategy !== 'RGRG_LOCK_RESET') || (section.disabled && !isLocked)) {
     tracker.style.display = 'none';
     return;
   }
@@ -1466,7 +1630,47 @@ function renderSniperTracker(key) {
   const labelEl = tracker.querySelector('.sniper-label');
   const countEl = document.getElementById(`sniper-count-${key}`);
 
-  if (strategy === 'RECOVERY_3_CHANCE') {
+  if (strategy === 'RGRG_LOCK_RESET') {
+    // RGRG Lock Reset mode — show loss counter
+    if (labelEl) labelEl.textContent = 'Losses:';
+    const count = section.lockLossCount || 0;
+    const isLive = section.strategyState === 'SIGNAL_ACTIVE' && section.pendingBet && !section.pendingBet.isVirtual;
+
+    // Update dots — show losses
+    for (let i = 1; i <= 3; i++) {
+      const dot = document.getElementById(`sniper-dot-${key}-${i}`);
+      if (!dot) continue;
+
+      dot.classList.remove('filled', 'ready');
+      if (i <= count) {
+        dot.classList.add('filled');
+      }
+      if (isLocked) {
+        dot.classList.add('ready');
+      }
+    }
+
+    // Update count text
+    if (isLocked) {
+      countEl.textContent = '🔒 LOCKED';
+      countEl.className = 'sniper-count sniper-live';
+      tracker.classList.add('tracker-live');
+      tracker.classList.remove('tracker-ready');
+    } else if (isLive) {
+      countEl.textContent = `🎯 LIVE (${count}/3)`;
+      countEl.className = 'sniper-count sniper-ready';
+      tracker.classList.add('tracker-ready');
+      tracker.classList.remove('tracker-live');
+    } else if (count > 0) {
+      countEl.textContent = `${count}/3`;
+      countEl.className = 'sniper-count';
+      tracker.classList.remove('tracker-ready', 'tracker-live');
+    } else {
+      countEl.textContent = '0/3';
+      countEl.className = 'sniper-count';
+      tracker.classList.remove('tracker-ready', 'tracker-live');
+    }
+  } else if (strategy === 'RECOVERY_3_CHANCE') {
     // Recovery 3-Chance mode
     if (labelEl) labelEl.textContent = 'Recovery:';
     const count = section.recoveryAttempt || 0;
@@ -1774,6 +1978,8 @@ function renderTradeBanner(key) {
     } else if (strategy === 'STREAK_5_CONTINUE') {
       const betAmt = STREAK5_CONFIG.BET_LADDER[section.streak5Level || 0];
       colorEl.textContent = `🔥 ${betColorLabel} pe lagao! (₹${betAmt} Lv${(section.streak5Level || 0) + 1})`;
+    } else if (strategy === 'RGRG_LOCK_RESET') {
+      colorEl.textContent = `🎯 ${betColorLabel} pe lagao! (Loss: ${section.lockLossCount}/3)`;
     } else {
       colorEl.textContent = `🎯 ${betColorLabel} pe lagao!`;
     }
@@ -1998,6 +2204,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   restoreFreshSignalState();
+  restoreRgrgLockState();
   
   // Set strategy select element
   const selectEl = document.getElementById('strategy-select');
@@ -2009,7 +2216,7 @@ document.addEventListener('DOMContentLoaded', () => {
   for (const key of Object.keys(state.sections)) {
     const toggleEl = document.getElementById(`toggle-${key}`);
     if (toggleEl) {
-      toggleEl.checked = !state.sections[key].disabled;
+      toggleEl.checked = !state.sections[key].disabled && !isRgrgSectionLocked(state.sections[key]);
     }
   }
 

@@ -572,6 +572,18 @@ body {
   color: var(--text-muted);
 }
 
+.section-status.status-locked {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  font-weight: 700;
+  animation: lockedPulse 2s ease-in-out infinite;
+}
+
+@keyframes lockedPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 .section-status.status-hunting {
   background: rgba(245, 158, 11, 0.12);
   color: var(--color-amber);
