@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -67,7 +67,7 @@
     <div class="strategy-selector-row">
       <label for="strategy-select" class="strategy-select-label">Strategy Mode:</label>
       <select id="strategy-select" class="strategy-select-dropdown" onchange="changeStrategy(this.value)">
-        <option value="RGRG_LOCK_RESET">🔒 RGRG Lock Reset (3 Loss = Lock, Win = Reset)</option>
+        <option value="RGRG_LOCK_RESET">🔒 RGRG Virtual Lock (3 Virtual Loss → 4th Live)</option>
         <option value="ANTI_MARTINGALE_SELECT">🧠 Anti-Martingale Sniper (B+E Only — Best)</option>
         <option value="SNIPER_3_LOSS_RGRG">🏆 Sniper 3-Loss + RGRG (85.7% Win — Best)</option>
         <option value="RECOVERY_3_CHANCE">🔄 3-Chance Recovery (3 LIVE Signals per Trend)</option>
@@ -294,6 +294,6 @@
   <!-- Toast container -->
   <div id="toast" class="toast"></div>
 
-  <script src="app.js?v=rgrg-lock-20260620"></script>
+  <script src="app.js?v=rgrg-virtual-lock-20260620"></script>
 </body>
 </html>

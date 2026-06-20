@@ -1,9 +1,9 @@
-const CACHE_NAME = 'wingo-strategy-v3-rgrg-lock';
+const CACHE_NAME = 'wingo-strategy-v4-rgrg-virtual-lock';
 const ASSETS = [
   './',
   './index.html',
   './index.css?v=rgrg-lock-20260620',
-  './app.js?v=rgrg-lock-20260620',
+  './app.js?v=rgrg-virtual-lock-20260620',
   './manifest.json',
   './icon.png'
 ];
