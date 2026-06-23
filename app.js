@@ -67,6 +67,11 @@ for (const [key, info] of Object.entries(CONFIG.SECTIONS)) {
     lockLossCount: 0,             // Kept in sync with virtualLossCount for legacy UI state.
     rgrgLocked: false,
     rgrgLiveLoss: false,
+    // Consecutive loss tracker (independent — virtual + live both count)
+    consecLossStreak: 0,          // Current consecutive loss streak
+    maxConsecLossStreak: 0,       // Max consecutive loss streak ever seen
+    hit6ConsecLosses: false,      // True if 6+ consecutive losses ever happened
+    consecLoss6Count: 0,          // How many times 6+ streak happened
     // Anti-Martingale state
     amConsecutiveWins: 0,
     amCurrentBet: 10,
@@ -803,6 +808,7 @@ function resolveRgrgBet(key, period) {
     if (won) {
       section.virtualLossCount = 0;
       section.lockLossCount = 0;
+      section.consecLossStreak = 0;
       section.strategyState = 'HUNTING';
       addLog(
         `👁️ [${section.name}] Virtual WIN on #${formatPeriod(period.period)}. Counter reset to 0/3.`,
@@ -811,10 +817,13 @@ function resolveRgrgBet(key, period) {
     } else {
       section.virtualLossCount = Math.min(3, section.virtualLossCount + 1);
       section.lockLossCount = section.virtualLossCount;
+      section.consecLossStreak++;
+      section.maxConsecLossStreak = Math.max(section.maxConsecLossStreak, section.consecLossStreak);
+      checkConsecLoss6Alert(key, section);
       section.strategyState = 'WAITING_FOR_TREND_BREAK';
       section.rgrgLiveLoss = false;
       addLog(
-        `👁️ [${section.name}] Virtual LOSS on #${formatPeriod(period.period)}. ${section.virtualLossCount}/3 complete; waiting for trend break.`,
+        `👁️ [${section.name}] Virtual LOSS on #${formatPeriod(period.period)}. ${section.virtualLossCount}/3 complete; waiting for trend break. (Consec: ${section.consecLossStreak})`,
         'info'
       );
     }
@@ -832,6 +841,7 @@ function resolveRgrgBet(key, period) {
 
   if (won) {
     section.totalWins++;
+    section.consecLossStreak = 0;
     addLog(
       `✅ [${section.name}] PROFIT! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)}). Full cycle reset.`,
       'win'
@@ -841,12 +851,15 @@ function resolveRgrgBet(key, period) {
     resetRgrgCycle();
   } else {
     section.totalLosses++;
+    section.consecLossStreak++;
+    section.maxConsecLossStreak = Math.max(section.maxConsecLossStreak, section.consecLossStreak);
+    checkConsecLoss6Alert(key, section);
     section.strategyState = 'WAITING_FOR_TREND_BREAK';
     section.rgrgLiveLoss = true;
     section.virtualLossCount = 3;
     section.lockLossCount = 3;
     addLog(
-      `❌ [${section.name}] LIVE LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}. Waiting for alternating trend to end before next pattern.`,
+      `❌ [${section.name}] LIVE LOSS! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)}. (Consec: ${section.consecLossStreak}) Waiting for trend break.`,
       'loss'
     );
     showToast(`❌ ${section.name} loss. Waiting for trend break.`, 'error');
@@ -854,6 +867,25 @@ function resolveRgrgBet(key, period) {
   }
 
   return true;
+}
+
+/** Check if consecutive loss streak hit 6 and fire alert */
+function checkConsecLoss6Alert(key, section) {
+  if (section.consecLossStreak >= 6) {
+    if (section.consecLossStreak === 6 || section.consecLossStreak % 6 === 0) {
+      section.hit6ConsecLosses = true;
+      section.consecLoss6Count++;
+      addLog(
+        `🚨💀 [${section.name}] 6 CONSECUTIVE LOSSES! Streak: ${section.consecLossStreak} | Times hit: ${section.consecLoss6Count}`,
+        'loss'
+      );
+      showToast(`💀 ${section.name}: ${section.consecLossStreak} consecutive losses!`, 'error');
+      sendSystemNotification(
+        `💀 6 CONSEC LOSS: ${section.name}`,
+        `${section.consecLossStreak} consecutive losses (virtual+live)! Times hit: ${section.consecLoss6Count}`
+      );
+    }
+  }
 }
 
 // ============ DATA FETCHING ============
@@ -925,6 +957,7 @@ function scanHistoryForSection(section) {
   let activeBet = null; // { color, period, isVirtual }
   let virtualLossCount = 0;
   let recoveryAttempt = 0;
+  let consecLossStreak = 0;
   let rgrgHistoryLiveLoss = false;
 
   for (let i = 0; i < periods.length; i++) {
@@ -937,9 +970,11 @@ function scanHistoryForSection(section) {
         // Virtual bet resolution (Sniper mode)
         if (won) {
           virtualLossCount = 0;
+          consecLossStreak = 0;
           section.strategyState = 'HUNTING';
         } else {
           virtualLossCount++;
+          consecLossStreak++;
           section.strategyState = 'WAITING_FOR_TREND_BREAK';
           rgrgHistoryLiveLoss = false;
         }
@@ -954,6 +989,7 @@ function scanHistoryForSection(section) {
 
         if (won) {
           section.totalWins++;
+          consecLossStreak = 0;
           section.strategyState = 'HUNTING';
           if (strategy === 'RGRG_LOCK_RESET') virtualLossCount = 0;
           if (strategy === 'ANTI_MARTINGALE_SELECT') {
@@ -976,6 +1012,7 @@ function scanHistoryForSection(section) {
           }
         } else {
           section.totalLosses++;
+          consecLossStreak++;
           if (strategy === 'ANTI_MARTINGALE_SELECT') {
             const betAmt = activeBet.amBetAmount || getAMBetAmount(section.amConsecutiveWins);
             section.amTotalPNL -= betAmt;
@@ -1115,6 +1152,18 @@ function scanHistoryForSection(section) {
   section.virtualLossCount = virtualLossCount;
   section.lockLossCount = virtualLossCount;
   section.recoveryAttempt = recoveryAttempt;
+  section.consecLossStreak = consecLossStreak;
+  section.maxConsecLossStreak = Math.max(section.maxConsecLossStreak, consecLossStreak);
+  if (consecLossStreak >= 6) {
+    section.hit6ConsecLosses = true;
+    // Count how many times 6+ streak occurred in history
+    let count6 = 0;
+    let streak = 0;
+    for (const bet of section.betHistory) {
+      if (bet.won) { streak = 0; } else { streak++; if (streak === 6) count6++; }
+    }
+    section.consecLoss6Count = Math.max(count6, section.consecLoss6Count);
+  }
 
   // Check for current pattern (latest colors)
   checkCurrentPattern(section);
@@ -1281,6 +1330,7 @@ function processNewData(key, apiData) {
         // Resolve virtual bet (Sniper mode)
         if (won) {
           section.virtualLossCount = 0;
+          section.consecLossStreak = 0;
           section.strategyState = 'HUNTING';
           addLog(
             `👁️ [${section.name}] Sniper Virtual WIN (No real bet) on #${formatPeriod(period.period)}. Resetting sniper.`,
@@ -1288,10 +1338,13 @@ function processNewData(key, apiData) {
           );
         } else {
           section.virtualLossCount++;
+          section.consecLossStreak++;
+          section.maxConsecLossStreak = Math.max(section.maxConsecLossStreak, section.consecLossStreak);
+          checkConsecLoss6Alert(key, section);
           section.strategyState = 'WAITING_FOR_TREND_BREAK';
           section.rgrgLiveLoss = false;
           addLog(
-            `👁️ [${section.name}] Sniper Virtual LOSS (No real bet) on #${formatPeriod(period.period)}. Count: ${section.virtualLossCount}/3. Waiting for trend break.`,
+            `👁️ [${section.name}] Sniper Virtual LOSS (No real bet) on #${formatPeriod(period.period)}. Count: ${section.virtualLossCount}/3. (Consec: ${section.consecLossStreak})`,
             'info'
           );
         }
@@ -1306,6 +1359,7 @@ function processNewData(key, apiData) {
 
         if (won) {
           section.totalWins++;
+          section.consecLossStreak = 0;
           addLog(
             `✅ [${section.name}] WIN! Bet ${colorName(resolvedBet.color)}, Got ${colorName(actualColor)} (#${formatPeriod(period.period)})`,
             'win'
@@ -1325,6 +1379,9 @@ function processNewData(key, apiData) {
           }
         } else {
           section.totalLosses++;
+          section.consecLossStreak++;
+          section.maxConsecLossStreak = Math.max(section.maxConsecLossStreak, section.consecLossStreak);
+          checkConsecLoss6Alert(key, section);
           hideSignalBanner();
           if (strategy === 'RECOVERY_3_CHANCE') {
             section.recoveryAttempt++;
@@ -1709,6 +1766,9 @@ function renderSection(key) {
   // Bet history ribbon
   renderBetHistory(key);
 
+  // 6-consecutive loss badge
+  renderConsecLossBadge(key);
+
   // Sniper loss tracker
   renderSniperTracker(key);
 }
@@ -1924,6 +1984,47 @@ function renderSniperTracker(key) {
       countEl.textContent = `${count}/3`;
       countEl.className = 'sniper-count';
       tracker.classList.remove('tracker-ready', 'tracker-live');
+    }
+  }
+}
+
+function renderConsecLossBadge(key) {
+  const section = state.sections[key];
+  const badge = document.getElementById(`consec-loss-badge-${key}`);
+  if (!badge) return;
+
+  const streak = section.consecLossStreak || 0;
+  const maxStreak = section.maxConsecLossStreak || 0;
+  const hit6 = section.hit6ConsecLosses;
+  const times6 = section.consecLoss6Count || 0;
+
+  if (maxStreak < 1) {
+    badge.style.display = 'none';
+    return;
+  }
+
+  badge.style.display = '';
+
+  const currentEl = document.getElementById(`consec-loss-current-${key}`);
+  const maxEl = document.getElementById(`consec-loss-max-${key}`);
+
+  if (currentEl) currentEl.textContent = `Now: ${streak}`;
+  if (maxEl) maxEl.textContent = `Max: ${maxStreak}`;
+
+  badge.classList.remove('consec-danger', 'consec-warning');
+  if (hit6) {
+    badge.classList.add('consec-danger');
+  } else if (maxStreak >= 4) {
+    badge.classList.add('consec-warning');
+  }
+
+  const alertEl = document.getElementById(`consec-loss-alert-${key}`);
+  if (alertEl) {
+    if (hit6) {
+      alertEl.textContent = `💀 6+ hit ${times6}x`;
+      alertEl.style.display = '';
+    } else {
+      alertEl.style.display = 'none';
     }
   }
 }
