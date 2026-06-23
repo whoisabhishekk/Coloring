@@ -1998,11 +1998,6 @@ function renderConsecLossBadge(key) {
   const hit6 = section.hit6ConsecLosses;
   const times6 = section.consecLoss6Count || 0;
 
-  if (maxStreak < 1) {
-    badge.style.display = 'none';
-    return;
-  }
-
   badge.style.display = '';
 
   const currentEl = document.getElementById(`consec-loss-current-${key}`);
