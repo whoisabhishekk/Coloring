@@ -778,7 +778,17 @@ function armBetFromCurrentPattern(key, nextPeriod) {
     const shouldGoLive = isSelected || section.virtualLossCount >= 3;
 
     if (shouldGoLive) {
-      if (!isSelected && !selectRgrgSection(key)) return false;
+      if (!isSelected && !selectRgrgSection(key)) {
+        // Locked by another section - continue tracking virtually instead of ignoring
+        section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: true };
+        section.strategyState = 'HUNTING';
+        persistRgrgLockState();
+        addLog(
+          `👁️ [${section.name}] Locked! Tracking Virtual Bet ${colorName(betColor)} on #${formatPeriod(nextPeriod)}.`,
+          'info'
+        );
+        return true;
+      }
       section.pendingBet = { color: betColor, period: nextPeriod, isVirtual: false };
       section.strategyState = 'SIGNAL_ACTIVE';
       persistRgrgLockState();
@@ -1282,17 +1292,11 @@ function processNewData(key, apiData) {
   const section = state.sections[key];
   const activeStrategy = state.selectedStrategy || 'RGRG_LOCK_RESET';
 
-  if (section.disabled || isRgrgSectionLocked(section, activeStrategy)) {
-    // If paused or locked, just sync periods data silently.
+  if (section.disabled) {
+    // If paused, just sync periods data silently.
     section.periods = apiData.periods || [];
     section.lastKnownPeriod = section.periods[section.periods.length - 1]?.period || 0;
     section.nextPeriod = apiData.next_period;
-    if (isRgrgSectionLocked(section, activeStrategy)) {
-      section.pendingBet = null;
-      section.patternDetected = false;
-      section.patternColors = null;
-      section.strategyState = 'HUNTING';
-    }
     return;
   }
 
