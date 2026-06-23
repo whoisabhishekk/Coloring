@@ -979,6 +979,7 @@ function scanHistoryForSection(section) {
   let recoveryAttempt = 0;
   let consecLossStreak = 0;
   let rgrgHistoryLiveLoss = false;
+  let winOccurred = false;
 
   for (let i = 0; i < periods.length; i++) {
     // Resolve active bet
@@ -992,6 +993,7 @@ function scanHistoryForSection(section) {
           virtualLossCount = 0;
           consecLossStreak = 0;
           section.strategyState = 'HUNTING';
+          winOccurred = true;
         } else {
           virtualLossCount++;
           consecLossStreak++;
@@ -1011,6 +1013,7 @@ function scanHistoryForSection(section) {
           section.totalWins++;
           consecLossStreak = 0;
           section.strategyState = 'HUNTING';
+          winOccurred = true;
           if (strategy === 'RGRG_LOCK_RESET') virtualLossCount = 0;
           if (strategy === 'ANTI_MARTINGALE_SELECT') {
             section.amConsecutiveWins++;
@@ -1172,11 +1175,18 @@ function scanHistoryForSection(section) {
   section.virtualLossCount = virtualLossCount;
   section.lockLossCount = virtualLossCount;
   section.recoveryAttempt = recoveryAttempt;
-  section.consecLossStreak = consecLossStreak;
-  section.maxConsecLossStreak = Math.max(section.maxConsecLossStreak, consecLossStreak);
+  
+  if (!winOccurred && section.consecLossStreak > consecLossStreak) {
+    // If no wins occurred in the 200 periods, the simulated streak might be incomplete
+    // Keep the longer restored streak to avoid resetting global count on refresh
+  } else {
+    section.consecLossStreak = consecLossStreak;
+  }
+  
+  section.maxConsecLossStreak = Math.max(section.maxConsecLossStreak, section.consecLossStreak);
+
   if (consecLossStreak >= 6) {
-    section.hit6ConsecLosses = true;
-    // Count how many times 6+ streak occurred in history
+    if (!section.hit6ConsecLosses) section.hit6ConsecLosses = true;
     let count6 = 0;
     let streak = 0;
     for (const bet of section.betHistory) {
