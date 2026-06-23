@@ -255,12 +255,20 @@ function persistRgrgLockState() {
 
   for (const [key, section] of Object.entries(state.sections)) {
     const count = Math.max(0, Number(section.virtualLossCount) || 0);
-    if (!count && !section.pendingBet) continue;
+    // Persist if there's an ongoing bet, loss count, or any loss streak history
+    if (!count && !section.pendingBet && !section.consecLossStreak && !section.maxConsecLossStreak) continue;
+    
     hasState = true;
     sections[key] = {
       virtualLossCount: count,
       strategyState: section.strategyState,
-      pendingBet: section.pendingBet
+      pendingBet: section.pendingBet,
+      consecLossStreak: section.consecLossStreak || 0,
+      maxConsecLossStreak: section.maxConsecLossStreak || 0,
+      totalLosses: section.totalLosses || 0,
+      rgrgLiveLoss: section.rgrgLiveLoss || false,
+      hit6ConsecLosses: section.hit6ConsecLosses || false,
+      consecLoss6Count: section.consecLoss6Count || 0
     };
   }
 
@@ -271,7 +279,7 @@ function persistRgrgLockState() {
 
   writeStorage(
     CONFIG.RGRG_LOCK_STORAGE_KEY,
-    JSON.stringify({ version: 2, activeSectionKey: state.rgrgActiveSectionKey, sections })
+    JSON.stringify({ version: 3, activeSectionKey: state.rgrgActiveSectionKey, sections })
   );
 }
 
@@ -281,7 +289,7 @@ function restoreRgrgLockState() {
 
   try {
     const parsed = JSON.parse(raw);
-    if (parsed.version !== 2) {
+    if (parsed.version !== 2 && parsed.version !== 3) {
       removeStorage(CONFIG.RGRG_LOCK_STORAGE_KEY);
       return;
     }
@@ -298,6 +306,13 @@ function restoreRgrgLockState() {
       section.lockLossCount = section.virtualLossCount;
       section.pendingBet = saved.pendingBet || null;
       section.strategyState = saved.strategyState || (section.virtualLossCount >= 3 ? 'READY_FOR_LIVE' : 'HUNTING');
+      
+      section.consecLossStreak = saved.consecLossStreak || 0;
+      section.maxConsecLossStreak = saved.maxConsecLossStreak || 0;
+      section.totalLosses = saved.totalLosses || 0;
+      section.rgrgLiveLoss = saved.rgrgLiveLoss || false;
+      section.hit6ConsecLosses = saved.hit6ConsecLosses || false;
+      section.consecLoss6Count = saved.consecLoss6Count || 0;
     }
     syncRgrgSectionLocks();
   } catch (e) {
