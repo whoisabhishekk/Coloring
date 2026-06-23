@@ -810,6 +810,7 @@ function resolveRgrgBet(key, period) {
       section.lockLossCount = 0;
       section.consecLossStreak = 0;
       section.strategyState = 'HUNTING';
+      flashLagatarReset(key);
       addLog(
         `👁️ [${section.name}] Virtual WIN on #${formatPeriod(period.period)}. Counter reset to 0/3.`,
         'info'
@@ -848,6 +849,10 @@ function resolveRgrgBet(key, period) {
     );
     playAlertSound();
     showToast(`✅ ${section.name} PROFIT! Cycle reset.`, 'success');
+    // Flash lagatar reset on all sections (resetRgrgCycle clears all)
+    for (const sKey of Object.keys(state.sections)) {
+      flashLagatarReset(sKey);
+    }
     resetRgrgCycle();
   } else {
     section.totalLosses++;
@@ -2000,28 +2005,94 @@ function renderConsecLossBadge(key) {
 
   badge.style.display = '';
 
+  // Update the big number
   const currentEl = document.getElementById(`consec-loss-current-${key}`);
-  const maxEl = document.getElementById(`consec-loss-max-${key}`);
+  if (currentEl) currentEl.textContent = streak;
 
-  if (currentEl) currentEl.textContent = `Now: ${streak}`;
+  // Update max
+  const maxEl = document.getElementById(`consec-loss-max-${key}`);
   if (maxEl) maxEl.textContent = `Max: ${maxStreak}`;
 
-  badge.classList.remove('consec-danger', 'consec-warning');
-  if (hit6) {
-    badge.classList.add('consec-danger');
-  } else if (maxStreak >= 4) {
-    badge.classList.add('consec-warning');
+  // Update label emoji based on streak
+  const labelEl = badge.querySelector('.lagatar-label');
+  if (labelEl) {
+    if (streak === 0) {
+      labelEl.textContent = '✅ Lagatar Loss';
+    } else if (streak <= 2) {
+      labelEl.textContent = '🔥 Lagatar Loss';
+    } else if (streak <= 4) {
+      labelEl.textContent = '🔥🔥 Lagatar Loss';
+    } else if (streak <= 7) {
+      labelEl.textContent = '💀 Lagatar Loss';
+    } else {
+      labelEl.textContent = '💀☠️ Lagatar Loss';
+    }
   }
 
+  // Render fire dots (show up to max 10 dot slots, filled up to streak)
+  const dotsContainer = document.getElementById(`lagatar-dots-${key}`);
+  if (dotsContainer) {
+    const maxDots = Math.max(streak, Math.min(maxStreak, 10));
+    // Only re-render if dot count changed
+    const currentDotCount = dotsContainer.children.length;
+    if (currentDotCount !== maxDots) {
+      dotsContainer.innerHTML = '';
+      for (let i = 0; i < maxDots; i++) {
+        const dot = document.createElement('div');
+        dot.className = 'lagatar-fire-dot';
+        if (i < streak) {
+          dot.classList.add('dot-filled');
+        }
+        dotsContainer.appendChild(dot);
+      }
+    } else {
+      // Just update filled state
+      for (let i = 0; i < maxDots; i++) {
+        const dot = dotsContainer.children[i];
+        if (!dot) continue;
+        if (i < streak) {
+          dot.classList.add('dot-filled');
+        } else {
+          dot.classList.remove('dot-filled');
+        }
+      }
+    }
+  }
+
+  // Set escalating color state class
+  badge.classList.remove('lagatar-safe', 'lagatar-mild', 'lagatar-warning', 'lagatar-danger', 'lagatar-critical');
+  if (streak === 0) {
+    badge.classList.add('lagatar-safe');
+  } else if (streak <= 2) {
+    badge.classList.add('lagatar-mild');
+  } else if (streak <= 4) {
+    badge.classList.add('lagatar-warning');
+  } else if (streak <= 7) {
+    badge.classList.add('lagatar-danger');
+  } else {
+    badge.classList.add('lagatar-critical');
+  }
+
+  // 6+ alert text
   const alertEl = document.getElementById(`consec-loss-alert-${key}`);
   if (alertEl) {
     if (hit6) {
-      alertEl.textContent = `💀 6+ hit ${times6}x`;
+      alertEl.textContent = `💀 6+ consecutive loss ${times6}x times!`;
       alertEl.style.display = '';
     } else {
       alertEl.style.display = 'none';
     }
   }
+}
+
+/** Trigger green reset flash animation on the lagatar bar when profit resets streak */
+function flashLagatarReset(key) {
+  const badge = document.getElementById(`consec-loss-badge-${key}`);
+  if (!badge) return;
+  badge.classList.add('lagatar-reset');
+  setTimeout(() => {
+    badge.classList.remove('lagatar-reset');
+  }, 900);
 }
 
 function renderLog(entry) {

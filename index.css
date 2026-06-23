@@ -1420,78 +1420,269 @@ body {
   50% { opacity: 0.6; }
 }
 
-/* ---------- Consecutive Loss Badge ---------- */
+/* ---------- Lagatar Loss Streak Bar ---------- */
 
-.consec-loss-badge {
+.lagatar-loss-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  margin-top: 4px;
-  border-radius: var(--radius-sm);
+  gap: 10px;
+  padding: 10px 14px;
+  margin-top: 8px;
+  border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: var(--text-secondary);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
   flex-wrap: wrap;
 }
 
-.consec-loss-label {
-  font-weight: 600;
-  color: var(--text-muted);
+/* Streak 0 — safe, green tint */
+.lagatar-loss-bar.lagatar-safe {
+  border-color: rgba(46, 213, 115, 0.2);
+  background: rgba(46, 213, 115, 0.04);
 }
 
-.consec-loss-current,
-.consec-loss-max {
-  padding: 2px 6px;
-  border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.05);
+/* Streak 1-2 — mild, amber glow */
+.lagatar-loss-bar.lagatar-mild {
+  border-color: rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+/* Streak 3-4 — warning, orange heat */
+.lagatar-loss-bar.lagatar-warning {
+  border-color: rgba(255, 140, 0, 0.35);
+  background: rgba(255, 140, 0, 0.07);
+  box-shadow: 0 0 10px rgba(255, 140, 0, 0.1);
+}
+
+/* Streak 5+ — danger, red fire */
+.lagatar-loss-bar.lagatar-danger {
+  border-color: rgba(255, 71, 87, 0.45);
+  background: rgba(255, 71, 87, 0.08);
+  box-shadow: 0 0 16px rgba(255, 71, 87, 0.2);
+  animation: lagatarDangerPulse 1.8s ease-in-out infinite;
+}
+
+/* Streak 8+ — critical, flashing red */
+.lagatar-loss-bar.lagatar-critical {
+  border-color: rgba(255, 40, 55, 0.6);
+  background: rgba(255, 40, 55, 0.12);
+  box-shadow: 0 0 24px rgba(255, 40, 55, 0.3), inset 0 0 20px rgba(255, 40, 55, 0.05);
+  animation: lagatarCriticalPulse 1s ease-in-out infinite;
+}
+
+/* Profit reset animation */
+.lagatar-loss-bar.lagatar-reset {
+  border-color: rgba(46, 213, 115, 0.5) !important;
+  background: rgba(46, 213, 115, 0.12) !important;
+  box-shadow: 0 0 20px rgba(46, 213, 115, 0.3) !important;
+  animation: lagatarResetFlash 0.8s ease-out !important;
+}
+
+/* Left: label + max */
+.lagatar-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 85px;
+}
+
+.lagatar-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  transition: color 0.3s;
+}
+
+.lagatar-loss-bar.lagatar-warning .lagatar-label { color: #ff8c00; }
+.lagatar-loss-bar.lagatar-danger .lagatar-label { color: var(--color-red); }
+.lagatar-loss-bar.lagatar-critical .lagatar-label { color: #ff2837; font-size: 0.76rem; }
+.lagatar-loss-bar.lagatar-safe .lagatar-label { color: var(--color-green); }
+
+.lagatar-max {
+  font-size: 0.62rem;
   font-weight: 500;
+  color: var(--text-muted);
+  opacity: 0.7;
 }
 
+/* Center: fire dots */
+.lagatar-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.lagatar-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.lagatar-fire-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 71, 87, 0.15);
+  border: 1.5px solid rgba(255, 71, 87, 0.25);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.lagatar-fire-dot.dot-filled {
+  background: var(--color-red);
+  border-color: rgba(255, 71, 87, 0.7);
+  box-shadow: 0 0 6px rgba(255, 71, 87, 0.5);
+  animation: lagatarDotPop 0.4s ease-out;
+}
+
+/* Escalating dot colors based on position */
+.lagatar-fire-dot.dot-filled:nth-child(-n+2) {
+  background: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
+}
+
+.lagatar-fire-dot.dot-filled:nth-child(n+3):nth-child(-n+4) {
+  background: #ff8c00;
+  border-color: rgba(255, 140, 0, 0.7);
+  box-shadow: 0 0 8px rgba(255, 140, 0, 0.5);
+}
+
+.lagatar-fire-dot.dot-filled:nth-child(n+5) {
+  background: #ff4757;
+  border-color: rgba(255, 71, 87, 0.8);
+  box-shadow: 0 0 10px rgba(255, 71, 87, 0.6);
+}
+
+.lagatar-fire-dot.dot-filled:nth-child(n+7) {
+  background: #ff2837;
+  border-color: rgba(255, 40, 55, 0.9);
+  box-shadow: 0 0 12px rgba(255, 40, 55, 0.7);
+  animation: lagatarDotBurn 1.2s ease-in-out infinite;
+}
+
+/* Right: big number */
+.lagatar-right {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+}
+
+.lagatar-number {
+  font-size: 1.6rem;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 36px;
+}
+
+.lagatar-loss-bar.lagatar-safe .lagatar-number {
+  color: var(--color-green);
+  font-size: 1.4rem;
+}
+
+.lagatar-loss-bar.lagatar-mild .lagatar-number {
+  color: #f59e0b;
+  font-size: 1.5rem;
+}
+
+.lagatar-loss-bar.lagatar-warning .lagatar-number {
+  color: #ff8c00;
+  font-size: 1.7rem;
+  text-shadow: 0 0 8px rgba(255, 140, 0, 0.4);
+}
+
+.lagatar-loss-bar.lagatar-danger .lagatar-number {
+  color: #ff4757;
+  font-size: 1.9rem;
+  text-shadow: 0 0 12px rgba(255, 71, 87, 0.5);
+}
+
+.lagatar-loss-bar.lagatar-critical .lagatar-number {
+  color: #ff2837;
+  font-size: 2.1rem;
+  text-shadow: 0 0 16px rgba(255, 40, 55, 0.6);
+  animation: lagatarNumberShake 0.5s ease-in-out infinite;
+}
+
+.lagatar-loss-bar.lagatar-reset .lagatar-number {
+  color: var(--color-green) !important;
+  text-shadow: 0 0 12px rgba(46, 213, 115, 0.5) !important;
+}
+
+/* Alert text */
 .consec-loss-alert {
   font-weight: 700;
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: rgba(255, 71, 87, 0.15);
   color: var(--color-red);
+  font-size: 0.68rem;
   animation: consecPulse 1.5s ease-in-out infinite;
+  width: 100%;
+  text-align: center;
+  margin-top: 4px;
 }
 
-/* Warning state (4-5 consecutive losses) */
-.consec-loss-badge.consec-warning {
-  border-color: rgba(245, 158, 11, 0.3);
-  background: rgba(245, 158, 11, 0.06);
+/* Animations */
+@keyframes lagatarDangerPulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(255, 71, 87, 0.15); }
+  50% { box-shadow: 0 0 22px rgba(255, 71, 87, 0.3); }
 }
 
-.consec-loss-badge.consec-warning .consec-loss-label {
-  color: var(--color-amber);
+@keyframes lagatarCriticalPulse {
+  0%, 100% {
+    box-shadow: 0 0 16px rgba(255, 40, 55, 0.2);
+    border-color: rgba(255, 40, 55, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(255, 40, 55, 0.45);
+    border-color: rgba(255, 40, 55, 0.8);
+  }
 }
 
-.consec-loss-badge.consec-warning .consec-loss-current,
-.consec-loss-badge.consec-warning .consec-loss-max {
-  color: var(--color-amber);
-  background: rgba(245, 158, 11, 0.1);
+@keyframes lagatarResetFlash {
+  0% {
+    background: rgba(46, 213, 115, 0.25);
+    box-shadow: 0 0 30px rgba(46, 213, 115, 0.5);
+    transform: scale(1.02);
+  }
+  100% {
+    background: rgba(46, 213, 115, 0.08);
+    box-shadow: 0 0 10px rgba(46, 213, 115, 0.15);
+    transform: scale(1);
+  }
 }
 
-/* Danger state (6+ consecutive losses) */
-.consec-loss-badge.consec-danger {
-  border-color: rgba(255, 71, 87, 0.4);
-  background: rgba(255, 71, 87, 0.08);
-  box-shadow: 0 0 12px rgba(255, 71, 87, 0.15);
-  animation: consecDangerGlow 2s ease-in-out infinite;
+@keyframes lagatarDotPop {
+  0% { transform: scale(0.3); opacity: 0.3; }
+  60% { transform: scale(1.4); }
+  100% { transform: scale(1); opacity: 1; }
 }
 
-.consec-loss-badge.consec-danger .consec-loss-label {
-  color: var(--color-red);
+@keyframes lagatarDotBurn {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 40, 55, 0.5); }
+  50% { box-shadow: 0 0 16px rgba(255, 40, 55, 0.8); }
 }
 
-.consec-loss-badge.consec-danger .consec-loss-current,
-.consec-loss-badge.consec-danger .consec-loss-max {
-  color: var(--color-red);
-  background: rgba(255, 71, 87, 0.12);
-  font-weight: 700;
+@keyframes lagatarNumberShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-1px); }
+  75% { transform: translateX(1px); }
 }
 
 @keyframes consecPulse {
