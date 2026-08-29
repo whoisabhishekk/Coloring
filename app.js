@@ -23,7 +23,7 @@ const CONFIG = {
   }
 };
 
-const DEFAULT_STRATEGY = 'RGRG_LOCK_RESET';
+const DEFAULT_STRATEGY = 'RGR_GRG_3';
 const HIDDEN_STRATEGIES = new Set(['STREAK_5_CONTINUE']);
 
 function getInitialStrategy() {
