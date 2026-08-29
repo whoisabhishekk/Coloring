@@ -128,8 +128,8 @@ const STREAK5_CONFIG = {
   WIN_MULTIPLIER: 0.96
 };
 
-const VIRTUAL_LOSS_TARGET = 10;
-const VIRTUAL_LOSS_DOTS_MAX = 10;
+const VIRTUAL_LOSS_TARGET = 4;
+const VIRTUAL_LOSS_DOTS_MAX = 4;
 const CONTRARIAN_VIRTUAL_LOSS_TARGET = 4;
 
 function getVirtualLossTarget(strategy) {
