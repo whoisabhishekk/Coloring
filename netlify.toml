@@ -6,4 +6,3 @@
   to = "https://cooe02.in/:splat"
   status = 200
   force = true
-  headers = { X-From = "Netlify-CDN-Proxy" }
