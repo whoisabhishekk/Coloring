@@ -1137,6 +1137,7 @@ function scanHistoryForCycleStrategy(key) {
           section.cyclePhase = 'WAITING_CONFIRM';
         } else {
           section.cyclePhase = 'POST_BREAK_HUNTING';
+          section.initialStreakBroken = false;
         }
       }
       continue;
@@ -1156,10 +1157,16 @@ function scanHistoryForCycleStrategy(key) {
       continue;
     }
     
-    // -- POST_BREAK_HUNTING: reset if consecutive before RGRG --
+    // -- POST_BREAK_HUNTING: reset if new consecutive streak found --
     if (section.cyclePhase === 'POST_BREAK_HUNTING') {
+      if (currentColor !== section.breakColor) {
+        section.initialStreakBroken = true;
+      }
       if (prevColor && currentColor === prevColor) {
-        fullCycleReset(section);
+        const isInitialStreak = (currentColor === section.breakColor) && !section.initialStreakBroken;
+        if (!isInitialStreak) {
+          fullCycleReset(section);
+        }
       }
     }
     
@@ -1217,6 +1224,7 @@ function processCycleStrategy(key) {
         }
       } else {
         section.cyclePhase = 'POST_BREAK_HUNTING';
+        section.initialStreakBroken = false;
         persistRgrgLockState();
         addLog(
           `🔄 [${section.name}] RGRG #${section.cycleCount}/4 → ${colorName(currentColor)}${colorName(currentColor)} break. Hunting next RGRG...`,
@@ -1252,16 +1260,22 @@ function processCycleStrategy(key) {
 
   // ---- Phase: POST_BREAK_HUNTING ----
   if (section.cyclePhase === 'POST_BREAK_HUNTING') {
+    if (currentColor !== section.breakColor) {
+      section.initialStreakBroken = true;
+    }
+
     if (currentColor === prevColor) {
-      // Consecutive found before RGRG/GRGR → RESET!
-      const oldCount = section.cycleCount;
-      fullCycleReset(section);
-      persistRgrgLockState();
-      addLog(
-        `🔄 [${section.name}] RESET! Consecutive ${colorName(currentColor)} before next RGRG (was ${oldCount}/4). Starting over.`,
-        'info'
-      );
-      // Fall through to HUNTING check below
+      const isInitialStreak = (currentColor === section.breakColor) && !section.initialStreakBroken;
+      
+      if (!isInitialStreak) {
+        const oldCount = section.cycleCount;
+        fullCycleReset(section);
+        persistRgrgLockState();
+        addLog(
+          `🔄 [${section.name}] RESET! New streak ${colorName(currentColor)}${colorName(currentColor)} found before next RGRG (was ${oldCount}/4). Starting over.`,
+          'info'
+        );
+      }
     }
   }
 

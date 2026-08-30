@@ -63,6 +63,7 @@ function runBacktest(periods) {
   let state = 'HUNTING';
   let lossCount = 0;
   let breakColor = null;
+  let initialStreakBroken = false;
   let confirmColor = null;
   let activeBet = null;
 
@@ -141,6 +142,7 @@ function runBacktest(periods) {
           state = 'WAITING_CONFIRM';
         } else {
           state = 'POST_BREAK_HUNTING';
+          initialStreakBroken = false;
         }
       }
       continue;
@@ -166,11 +168,18 @@ function runBacktest(periods) {
     }
 
     if (state === 'POST_BREAK_HUNTING') {
+      if (currentColor !== breakColor) {
+        initialStreakBroken = true;
+      }
+
       if (prevColor && currentColor === prevColor) {
-        if (lossCount > maxLossCountReached) maxLossCountReached = lossCount;
-        totalResets++;
-        lossCount = 0;
-        state = 'HUNTING';
+        const isInitialStreak = (currentColor === breakColor) && !initialStreakBroken;
+        if (!isInitialStreak) {
+          if (lossCount > maxLossCountReached) maxLossCountReached = lossCount;
+          totalResets++;
+          lossCount = 0;
+          state = 'HUNTING';
+        }
       }
     }
 
